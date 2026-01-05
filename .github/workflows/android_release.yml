@@ -1,0 +1,66 @@
+name: Android Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.5'
+        channel: 'stable'
+        cache: true
+
+    - name: Inject API Key
+      env:
+        API_KEY: ${{ secrets.API_KEY }}
+      run: |
+        sed -i 's/API_KEY_PLACEHOLDER/'"$API_KEY"'/g' android/app/src/main/AndroidManifest.xml
+        sed -i 's/API_KEY_PLACEHOLDER/'"$API_KEY"'/g' lib/utils/constants.dart
+
+    - name: Get Dependencies
+      run: flutter pub get
+
+    - name: Build APK (Release)
+      # Building without signing config usually results in debug signing or unsigned. 
+      # Since we don't have a release keystore, we rely on the default debug signing for now, 
+      # or we'd need to set up a keystore in CI.
+      # To ensure "split-per-abi" is not on by default (which it isn't for apk):
+      run: flutter build apk --release
+
+    - name: Rename APK
+      run: mv build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/GPS Mock-Universal.apk"
+
+    - name: Get Date
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/') != true # Create release for main push or dispatch
+      with:
+        tag_name: v${{ steps.date.outputs.date }}
+        name: Stable Release v${{ steps.date.outputs.date }}
+        files: "build/app/outputs/flutter-apk/GPS Mock-Universal.apk"
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
