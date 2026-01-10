@@ -10,14 +10,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gps_mock/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
+  testWidgets('App shows splash screen on startup', (WidgetTester tester) async {
     // Build our app and trigger a frame.
     await tester.pumpWidget(const MockGpsApp());
 
-    // Verify that the HomeScreen renders
+    // Verify that the MaterialApp renders
     expect(find.byType(MaterialApp), findsOneWidget);
 
-    // Verify FAB presence
-    expect(find.byIcon(Icons.my_location), findsOneWidget);
+    // Verify splash screen is shown with logo
+    expect(find.byType(Image), findsOneWidget);
   });
 }
