@@ -33,6 +33,14 @@ class _SplashScreenState extends State<SplashScreen> {
           width: 200,
           height: 200,
           fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            // Fallback to a simple icon if image fails to load
+            return const Icon(
+              Icons.location_on,
+              size: 100,
+              color: Colors.white,
+            );
+          },
         ),
       ),
     );
