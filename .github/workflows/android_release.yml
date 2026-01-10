@@ -35,15 +35,16 @@ jobs:
         sed -i 's/API_KEY_PLACEHOLDER/'"$API_KEY"'/g' android/app/src/main/AndroidManifest.xml
         sed -i 's/API_KEY_PLACEHOLDER/'"$API_KEY"'/g' lib/utils/constants.dart
 
-    - name: Get Dependencies
-      run: flutter pub get
-
-    - name: Build APK (Release)
-      # Building without signing config usually results in debug signing or unsigned. 
-      # Since we don't have a release keystore, we rely on the default debug signing for now, 
-      # or we'd need to set up a keystore in CI.
-      # To ensure "split-per-abi" is not on by default (which it isn't for apk):
-      run: flutter build apk --release
+    - name: Download Android Keystore
+      run: |
+        echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > android/app/upload-keystore.jks
+      
+    - name: Build Android Universal APK
+      env:
+        STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      run: flutter pub get && flutter build apk --release
 
     - name: Rename APK
       run: mv build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/GPS Mock-Universal.apk"
