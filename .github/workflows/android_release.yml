@@ -2,7 +2,12 @@ name: Android Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main", "dev" ]
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      # - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
