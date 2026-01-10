@@ -58,12 +58,16 @@ jobs:
       id: date
       run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
+    - name: Get Version
+      id: version
+      run: echo "version=${{ steps.date.outputs.date }}-${{ github.run_number }}" >> $GITHUB_OUTPUT
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/') != true # Create release for main push or dispatch
       with:
-        tag_name: v${{ steps.date.outputs.date }}
-        name: Stable Release v${{ steps.date.outputs.date }}
+        tag_name: v${{ steps.version.outputs.version }}
+        name: Stable Release v${{ steps.version.outputs.version }}
         files: "build/app/outputs/flutter-apk/GPS Mock-Universal.apk"
         draft: false
         prerelease: false
