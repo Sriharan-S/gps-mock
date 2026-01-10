@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:gps_mock/providers/app_state.dart';
-import 'package:gps_mock/ui/home_screen.dart';
+import 'package:gps_mock/ui/splash_screen.dart';
 
 void main() {
   runApp(const MockGpsApp());
@@ -24,7 +24,7 @@ class MockGpsApp extends StatelessWidget {
           ),
           useMaterial3: true,
         ),
-        home: const HomeScreen(),
+        home: const SplashScreen(),
       ),
     );
   }
