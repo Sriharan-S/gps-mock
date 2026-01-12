@@ -1,35 +1,53 @@
-# GPS Mock
+# 📍 GPS Mock
 
-A Flutter-based Android app for mocking/spoofing GPS locations on your device. Select any location on the map, and your device will report that position to all other apps.
+A Flutter-based Android app for mocking/spoofing GPS locations on your device. Select any location on the map, and your device will report that position to all other apps.  🗺️
 
-## Features
+## ⚠️ Disclaimer
 
-- **Interactive Map**: Use Google Maps to select your desired mock location by panning and zooming
-- **Location Search**: Search for any address or place and jump directly to it
-- **Favorites**: Save frequently used locations for quick access
-- **Real-time Mocking**: Start/stop GPS mocking with a single tap
-- **Material Design 3**: Modern dark-themed UI built with Flutter
+**IMPORTANT: Please read before using this app**
 
-## Prerequisites
+This application is intended for **educational and testing purposes only**. GPS mocking/spoofing can be used for:
+- Testing location-based apps during development
+- Privacy protection in controlled scenarios
+- Educational demonstrations
+
+**⚠️ Users are solely responsible for how they use this app.** The developers assume no liability for misuse. Please be aware that:
+
+- Using GPS mocking to deceive or defraud others is **illegal** in many jurisdictions
+- Many apps and services have terms of service that **prohibit** location spoofing
+- Violating these terms may result in account suspension or legal consequences
+- Some uses (e.g., gaming, ride-sharing fraud, location-based dating deception) may be **unethical and/or illegal**
+
+**Use this app responsibly and in accordance with all applicable laws and terms of service.**
+
+## ✨ Features
+
+- **🗺️ Interactive Map**: Use Google Maps to select your desired mock location by panning and zooming
+- **🔍 Location Search**: Search for any address or place and jump directly to it
+- **⭐ Favorites**: Save frequently used locations for quick access
+- **⚡ Real-time Mocking**: Start/stop GPS mocking with a single tap
+- **🎨 Material Design 3**: Modern dark-themed UI built with Flutter
+
+## 📋 Prerequisites
 
 Before using GPS Mock, you need to:
 
-1. **Enable Developer Options** on your Android device:
+1. **🔧 Enable Developer Options** on your Android device:
    - Go to **Settings > About Phone**
    - Tap **Build Number** 7 times to enable Developer Options
 
-2. **Set GPS Mock as the Mock Location App**:
+2. **📱 Set GPS Mock as the Mock Location App**:
    - Go to **Settings > Developer Options**
    - Find **Select mock location app**
    - Select **GPS Mock**
 
-## Installation
+## 💾 Installation
 
-### Download APK
+### 📥 Download APK
 
 Download the latest APK from the [Releases](../../releases) page.
 
-### Build from Source
+### 🔨 Build from Source
 
 #### Requirements
 
@@ -65,38 +83,38 @@ Download the latest APK from the [Releases](../../releases) page.
    flutter build apk --release
    ```
 
-## Usage
+## 🚀 Usage
 
-1. **Launch the app** and grant location permissions when prompted
-2. **Enable mock location** by tapping "Open Settings" in the dialog (or manually set it in Developer Options)
-3. **Select a location** by panning/zooming the map or using the search bar
-4. **Tap START** to begin mocking your GPS location
-5. **Tap STOP** to return to your real GPS location
+1. **📱 Launch the app** and grant location permissions when prompted
+2. **🔓 Enable mock location** by tapping "Open Settings" in the dialog (or manually set it in Developer Options)
+3. **📍 Select a location** by panning/zooming the map or using the search bar
+4. **▶️ Tap START** to begin mocking your GPS location
+5. **⏹️ Tap STOP** to return to your real GPS location
 
-### Saving Favorites
+### 💾 Saving Favorites
 
 1. Navigate to your desired location
-2. Tap the **heart icon** in the control panel
+2. Tap the **❤️ heart icon** in the control panel
 3. Enter a name for the location
 4. Tap **Save**
 
-Access your saved locations by tapping the **list icon** in the search bar.
+Access your saved locations by tapping the **📋 list icon** in the search bar.
 
-## Open Source
+## 🌟 Open Source
 
-GPS Mock is open source software released under the MIT License. You are free to use, modify, and distribute this software.
+GPS Mock is open source software released under the MIT License. You are free to use, modify, and distribute this software.  ✨
 
-## Contributing
+## 🤝 Contributing
 
 We welcome contributions from the community! Here's how you can help:
 
-### Ways to Contribute
+### 💡 Ways to Contribute
 
-- **Report Bugs**: Found a bug? Open an [issue](../../issues) with details about the problem
-- **Suggest Features**: Have an idea? Open an [issue](../../issues) to discuss it
-- **Submit Pull Requests**: Fix bugs or add features by submitting a PR
+- **🐛 Report Bugs**: Found a bug? Open an [issue](../../issues) with details about the problem
+- **💭 Suggest Features**: Have an idea? Open an [issue](../../issues) to discuss it
+- **🔧 Submit Pull Requests**: Fix bugs or add features by submitting a PR
 
-### Getting Started
+### 🚀 Getting Started
 
 1. Fork the repository
 2. Create a new branch for your feature or fix:
@@ -113,18 +131,18 @@ We welcome contributions from the community! Here's how you can help:
    ```
 5. Open a Pull Request against the `main` branch
 
-### Code Guidelines
+### 📝 Code Guidelines
 
 - Follow the existing code style and conventions
 - Write clear commit messages
 - Test your changes before submitting
 - Update documentation if needed
 
-## License
+## 📄 License
 
 This project is open source and available under the [MIT License](LICENSE).
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
 - Built with [Flutter](https://flutter.dev/)
 - Maps provided by [Google Maps Platform](https://developers.google.com/maps)
