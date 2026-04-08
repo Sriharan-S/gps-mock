@@ -2,24 +2,6 @@
 
 A Flutter-based Android app for mocking/spoofing GPS locations on your device. Select any location on the map, and your device will report that position to all other apps.  🗺️
 
-## ⚠️ Disclaimer
-
-**IMPORTANT: Please read before using this app**
-
-This application is intended for **educational and testing purposes only**. GPS mocking/spoofing can be used for:
-- Testing location-based apps during development
-- Privacy protection in controlled scenarios
-- Educational demonstrations
-
-**⚠️ Users are solely responsible for how they use this app.** The developers assume no liability for misuse. Please be aware that:
-
-- Using GPS mocking to deceive or defraud others is **illegal** in many jurisdictions
-- Many apps and services have terms of service that **prohibit** location spoofing
-- Violating these terms may result in account suspension or legal consequences
-- Some uses (e.g., gaming, ride-sharing fraud, location-based dating deception) may be **unethical and/or illegal**
-
-**Use this app responsibly and in accordance with all applicable laws and terms of service.**
-
 ## ✨ Features
 
 - **🗺️ Interactive Map**: Use Google Maps to select your desired mock location by panning and zooming
@@ -147,3 +129,21 @@ This project is open source and available under the [MIT License](LICENSE).
 - Built with [Flutter](https://flutter.dev/)
 - Maps provided by [Google Maps Platform](https://developers.google.com/maps)
 - Geocoding by [geocoding](https://pub.dev/packages/geocoding) package
+
+## ⚠️ Disclaimer
+
+**IMPORTANT: Please read before using this app**
+
+This application is intended for **educational and testing purposes only**. GPS mocking/spoofing can be used for:
+- Testing location-based apps during development
+- Privacy protection in controlled scenarios
+- Educational demonstrations
+
+**⚠️ Users are solely responsible for how they use this app.** The developers assume no liability for misuse. Please be aware that:
+
+- Using GPS mocking to deceive or defraud others is **illegal** in many jurisdictions
+- Many apps and services have terms of service that **prohibit** location spoofing
+- Violating these terms may result in account suspension or legal consequences
+- Some uses (e.g., gaming, ride-sharing fraud, location-based dating deception) may be **unethical and/or illegal**
+
+**Use this app responsibly and in accordance with all applicable laws and terms of service.
