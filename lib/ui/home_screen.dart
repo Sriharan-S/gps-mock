@@ -553,8 +553,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 onSelectionChanged: appState.isNavigating
                     ? null // locked to Route while a simulation runs
-                    : (selection) =>
-                          setState(() => _routeMode = selection.first),
+                    : (selection) {
+                        setState(() => _routeMode = selection.first);
+                        // Sensible default: start the trip from wherever
+                        // the pin currently is.
+                        final state = context.read<AppState>();
+                        if (_routeMode &&
+                            state.routeOrigin == null &&
+                            state.currentLocation != null) {
+                          state.setRouteOrigin(
+                            state.currentLocation!,
+                            state.currentAddress,
+                          );
+                        }
+                      },
               ),
               const SizedBox(height: 12),
               if (showRoutePanel)
