@@ -40,6 +40,9 @@ dependencies:
   geocoding: ^4.0.0
   permission_handler: ^12.0.1
   flutter_typeahead: ^5.2.0
+  http: ^1.6.0
+  geolocator: ^14.0.3
+  share_plus: ^13.2.0
 
 dev_dependencies:
   flutter_test:
