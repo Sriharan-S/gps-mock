@@ -38,22 +38,32 @@ class MockingService : Service() {
     private var job: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    @Volatile
+    private var pushFailureAlerted = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // Callers may use startForegroundService for the stop command
+            // (e.g. quick-settings tiles); honor the contract by entering
+            // the foreground before tearing down.
+            startForeground(NOTIFICATION_ID, buildNotification("Stopping mock location"))
             stopMocking()
             return START_NOT_STICKY
         }
 
         // A null intent means the system restarted us (START_STICKY). Resume
         // the persisted command instead of mocking lat/lng 0,0.
-        val command = commandFromIntent(intent) ?: MockStateStore.getActiveCommand(this)
+        val freshCommand = commandFromIntent(intent)
+        val command = freshCommand ?: MockStateStore.getActiveCommand(this)
         if (command == null) {
             stopSelf()
             return START_NOT_STICKY
         }
 
+        pushFailureAlerted = false
+        if (freshCommand != null) MockStateStore.recordStart(this, freshCommand)
         MockStateStore.setActiveCommand(this, command)
         startForeground(NOTIFICATION_ID, buildNotification(notificationText(command)))
         when (command.optString("mode", MODE_FIXED)) {
@@ -79,6 +89,9 @@ class MockingService : Service() {
                 put("routeFile", routeFile)
                 put("durationSeconds", durationSeconds)
                 put("label", intent.getStringExtra(EXTRA_LABEL) ?: "")
+                put("fromLabel", intent.getStringExtra(EXTRA_FROM_LABEL) ?: "")
+                put("toLabel", intent.getStringExtra(EXTRA_TO_LABEL) ?: "")
+                put("distanceMeters", intent.getDoubleExtra(EXTRA_DISTANCE_METERS, 0.0))
             }
         }
         if (!intent.hasExtra(EXTRA_LAT) || !intent.hasExtra(EXTRA_LNG)) return null
@@ -181,6 +194,10 @@ class MockingService : Service() {
 
         val points = loadRoutePoints(routeFile)
         if (points.size < 2 || durationSeconds <= 0) {
+            postAlert(
+                "Mock route stopped",
+                "The route data could not be loaded. Open GPS Mock and start the route again."
+            )
             stopMocking()
             return
         }
@@ -215,10 +232,15 @@ class MockingService : Service() {
             installTestProvider(locationManager)
 
             var tick = 0
+            var arrivalRecorded = false
             while (isActive) {
                 val elapsed = (System.currentTimeMillis() - startedAtMillis) / 1000.0
                 val fraction = (elapsed / durationSeconds).coerceIn(0.0, 1.0)
                 val arrived = fraction >= 1.0
+                if (arrived && !arrivalRecorded) {
+                    arrivalRecorded = true
+                    MockStateStore.recordArrived(this@MockingService)
+                }
                 val (position, bearing) = positionAlongRoute(
                     points, cumulative, totalDistance * fraction
                 )
@@ -473,12 +495,63 @@ class MockingService : Service() {
         }
         try {
             locationManager.setTestProviderLocation(PROVIDER, mockLocation)
+        } catch (e: SecurityException) {
+            // Android refused the mock push — almost always because the app
+            // is not (or no longer) selected as the mock location app. Tell
+            // the user immediately instead of pretending to mock.
+            onMockPushRejected()
         } catch (e: Exception) {
-            // Likely permission missing or not selected as the mock app
+            // Transient failure — keep trying.
         }
     }
 
+    /** Heads-up alert so a rejected mock never fails silently. */
+    private fun onMockPushRejected() {
+        if (pushFailureAlerted) return
+        pushFailureAlerted = true
+        postAlert(
+            "Mock location is NOT working",
+            "GPS Mock isn't selected as the mock location app in Developer Options. Tap to fix."
+        )
+    }
+
+    private fun postAlert(title: String, text: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                ALERT_CHANNEL_ID, "Mocking problems", NotificationManager.IMPORTANCE_HIGH
+            )
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+        }
+        val openAppIntent = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val devSettingsIntent = PendingIntent.getActivity(
+            this, 3,
+            Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent)
+            .addAction(0, "Open settings", devSettingsIntent)
+            .build()
+        getSystemService(NotificationManager::class.java)
+            ?.notify(ALERT_NOTIFICATION_ID, notification)
+    }
+
     private fun stopMocking() {
+        val wasArrived = status?.get("arrived") == true
+        MockStateStore.recordStop(this, wasArrived)
         MockStateStore.setActiveCommand(this, null)
         status = null
         job?.cancel()
@@ -509,11 +582,16 @@ class MockingService : Service() {
         const val EXTRA_FAVORITE_ID = "FAVORITE_ID"
         const val EXTRA_ROUTE_FILE = "ROUTE_FILE"
         const val EXTRA_DURATION_SECONDS = "DURATION_SECONDS"
+        const val EXTRA_FROM_LABEL = "FROM_LABEL"
+        const val EXTRA_TO_LABEL = "TO_LABEL"
+        const val EXTRA_DISTANCE_METERS = "DISTANCE_METERS"
         const val MODE_FIXED = "fixed"
         const val MODE_ROUTE = "route"
         private const val PROVIDER = LocationManager.GPS_PROVIDER
         private const val NOTIFICATION_ID = 1
+        private const val ALERT_NOTIFICATION_ID = 2
         private const val CHANNEL_ID = "mock_gps_channel"
+        private const val ALERT_CHANNEL_ID = "mock_gps_alerts"
         private const val TILE_SIZE = 256
         private const val OSM_USER_AGENT =
             "gps-mock/2.0 (https://github.com/Sriharan-S/gps-mock; " +

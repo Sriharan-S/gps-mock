@@ -8,6 +8,7 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.sriharan.gps_mock.MockControlActivity
+import com.sriharan.gps_mock.MockController
 import com.sriharan.gps_mock.MockStateStore
 
 /**
@@ -45,10 +46,20 @@ abstract class BaseFavoriteTileService : TileService() {
         super.onClick()
         val favorite = MockStateStore.getFavorites(this).getOrNull(slotIndex) ?: return
         if (isLocked) {
-            unlockAndRun { toggleViaTrampoline(favorite.id) }
+            unlockAndRun { toggle(favorite.id) }
         } else {
-            toggleViaTrampoline(favorite.id)
+            toggle(favorite.id)
         }
+    }
+
+    private fun toggle(favoriteId: String) {
+        // Prefer talking to the service directly: the quick-settings shade
+        // stays open so the user can watch the tile flip. Only fall back to
+        // the (shade-collapsing) trampoline when the platform refuses.
+        if (MockController.toggleFavoriteDirect(this, favoriteId)) {
+            return
+        }
+        toggleViaTrampoline(favoriteId)
     }
 
     private fun toggleViaTrampoline(favoriteId: String) {

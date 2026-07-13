@@ -31,11 +31,15 @@ class RouteException implements Exception {
 class RouteService {
   final http.Client _client = http.Client();
 
-  Future<RouteResult> fetchRoute(LatLng origin, LatLng destination) async {
+  /// Fetches one driving route through all [waypoints] in order (origin,
+  /// any intermediate stops, destination).
+  Future<RouteResult> fetchRoute(List<LatLng> waypoints) async {
+    assert(waypoints.length >= 2);
+    final coords = waypoints
+        .map((p) => "${p.longitude},${p.latitude}")
+        .join(';');
     final uri = Uri.parse(
-      "${AppConstants.osrmRouteBaseUrl}"
-      "${origin.longitude},${origin.latitude};"
-      "${destination.longitude},${destination.latitude}"
+      "${AppConstants.osrmRouteBaseUrl}$coords"
       "?overview=full&geometries=geojson",
     );
 

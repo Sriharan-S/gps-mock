@@ -42,12 +42,23 @@ class MainActivity : FlutterActivity() {
                             putExtra(MockingService.EXTRA_ROUTE_FILE, routeFile)
                             putExtra(MockingService.EXTRA_DURATION_SECONDS, durationSeconds)
                             putExtra(MockingService.EXTRA_LABEL, call.argument<String>("label"))
+                            putExtra(MockingService.EXTRA_FROM_LABEL, call.argument<String>("fromLabel"))
+                            putExtra(MockingService.EXTRA_TO_LABEL, call.argument<String>("toLabel"))
+                            putExtra(
+                                MockingService.EXTRA_DISTANCE_METERS,
+                                call.argument<Double>("distanceMeters") ?: 0.0
+                            )
                         }
                         startMockingService(intent)
                         result.success(null)
                     } else {
                         result.error("INVALID_ARGS", "routeFile/durationSeconds missing", null)
                     }
+                }
+                "getHistory" -> result.success(MockStateStore.getHistoryJson(this))
+                "clearHistory" -> {
+                    MockStateStore.clearHistory(this)
+                    result.success(null)
                 }
                 "stopMocking" -> {
                     val intent = Intent(this, MockingService::class.java)

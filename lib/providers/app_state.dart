@@ -7,12 +7,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart' show LatLngBounds;
 import 'package:geolocator/geolocator.dart';
 import 'package:gps_mock/models/location_item.dart';
+import 'package:gps_mock/models/map_style.dart';
+import 'package:gps_mock/models/mock_history_entry.dart';
 import 'package:gps_mock/services/mock_service_client.dart';
 import 'package:gps_mock/services/route_service.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// An intermediate stop on a planned mock route.
+class RouteStop {
+  final LatLng location;
+  final String label;
+  const RouteStop(this.location, this.label);
+}
 
 /// A one-shot request asking the map to move its camera. The home screen
 /// tracks the token so each request is animated exactly once. Either a
@@ -42,13 +51,19 @@ class AppState with ChangeNotifier {
   String? _lastError;
 
   // Route planning (mock navigation)
+  bool _routeMode = false;
   LatLng? _routeOrigin;
   String _routeOriginLabel = '';
   LatLng? _routeDestination;
   String _routeDestinationLabel = '';
+  final List<RouteStop> _routeStops = [];
   RouteResult? _plannedRoute;
   bool _fetchingRoute = false;
   String? _routeError;
+
+  // UI-level state shared across tabs
+  MapStyleId _mapStyle = MapStyleId.standard;
+  List<MockHistoryEntry> _history = [];
 
   // Live service status (polled once per second while the app is open)
   MockStatus _mockStatus = MockStatus.inactive;
@@ -67,13 +82,37 @@ class AppState with ChangeNotifier {
   String? get lastError => _lastError;
   MockServiceClient get client => _client;
 
+  bool get routeMode => _routeMode;
   LatLng? get routeOrigin => _routeOrigin;
   String get routeOriginLabel => _routeOriginLabel;
   LatLng? get routeDestination => _routeDestination;
   String get routeDestinationLabel => _routeDestinationLabel;
+  List<RouteStop> get routeStops => List.unmodifiable(_routeStops);
   RouteResult? get plannedRoute => _plannedRoute;
   bool get fetchingRoute => _fetchingRoute;
   String? get routeError => _routeError;
+  MapStyleId get mapStyle => _mapStyle;
+  List<MockHistoryEntry> get history => _history;
+
+  /// Switches the bottom panel between Fixed and Route mode. When entering
+  /// route mode with no origin yet, defaults it to the current pin.
+  void setRouteMode(bool value) {
+    if (_routeMode == value) return;
+    _routeMode = value;
+    if (value && _routeOrigin == null && _currentLocation != null) {
+      _routeOrigin = _currentLocation;
+      _routeOriginLabel = _currentAddress;
+    }
+    notifyListeners();
+  }
+
+  Future<void> setMapStyle(MapStyleId style) async {
+    if (_mapStyle == style) return;
+    _mapStyle = style;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('map_style', style.name);
+  }
 
   MockStatus get mockStatus => _mockStatus;
   bool get isNavigating => _mockStatus.active && _mockStatus.mode == 'route';
@@ -98,6 +137,9 @@ class AppState with ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _loadFavorites(prefs);
       unawaited(_syncFavoritesToNative());
+      _mapStyle = MapStyleId.values.asNameMap()[prefs.getString('map_style')] ??
+          MapStyleId.standard;
+      unawaited(loadHistory());
       final lastLat = prefs.getDouble('last_lat');
       final lastLng = prefs.getDouble('last_lng');
       if (lastLat != null && lastLng != null) {
@@ -151,22 +193,33 @@ class AppState with ChangeNotifier {
   }
 
   /// Fetches the device's real position and moves the map there. Used at
-  /// startup (when mocking is off) and by the my-location button.
+  /// startup (when mocking is off) and by the my-location button. Requests
+  /// the permission itself if needed and falls back to the last known fix
+  /// when a fresh one can't be obtained in time.
   Future<bool> moveToRealLocation() async {
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) return false;
-      final permission = await Geolocator.checkPermission();
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
         return false;
       }
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
-      if (_isMocking) return false; // don't fight an active mock
+      if (!await Geolocator.isLocationServiceEnabled()) return false;
+
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 20),
+          ),
+        );
+      } catch (_) {
+        position = await Geolocator.getLastKnownPosition();
+      }
+      if (position == null) return false;
       requestCamera(LatLng(position.latitude, position.longitude), zoom: 16);
       return true;
     } catch (_) {
@@ -278,6 +331,28 @@ class AppState with ChangeNotifier {
     _routeOriginLabel = _routeDestinationLabel;
     _routeDestination = location;
     _routeDestinationLabel = label;
+    // Reversing the trip also reverses the order of intermediate stops.
+    final reversed = _routeStops.reversed.toList();
+    _routeStops
+      ..clear()
+      ..addAll(reversed);
+    unawaited(_fetchPlannedRoute());
+  }
+
+  void addRouteStop(LatLng location, String label) {
+    _routeStops.add(RouteStop(location, label));
+    unawaited(_fetchPlannedRoute());
+  }
+
+  void updateRouteStop(int index, LatLng location, String label) {
+    if (index < 0 || index >= _routeStops.length) return;
+    _routeStops[index] = RouteStop(location, label);
+    unawaited(_fetchPlannedRoute());
+  }
+
+  void removeRouteStop(int index) {
+    if (index < 0 || index >= _routeStops.length) return;
+    _routeStops.removeAt(index);
     unawaited(_fetchPlannedRoute());
   }
 
@@ -286,6 +361,7 @@ class AppState with ChangeNotifier {
     _routeOriginLabel = '';
     _routeDestination = null;
     _routeDestinationLabel = '';
+    _routeStops.clear();
     _plannedRoute = null;
     _routeError = null;
     _fetchingRoute = false;
@@ -294,22 +370,27 @@ class AppState with ChangeNotifier {
 
   void retryRouteFetch() => unawaited(_fetchPlannedRoute());
 
+  List<LatLng> get _plannedWaypoints => [
+    if (_routeOrigin != null) _routeOrigin!,
+    ..._routeStops.map((stop) => stop.location),
+    if (_routeDestination != null) _routeDestination!,
+  ];
+
   Future<void> _fetchPlannedRoute() async {
     _plannedRoute = null;
     _routeError = null;
-    final origin = _routeOrigin;
-    final destination = _routeDestination;
-    if (origin == null || destination == null) {
+    if (_routeOrigin == null || _routeDestination == null) {
       notifyListeners();
       return;
     }
+    final waypoints = _plannedWaypoints;
 
     _fetchingRoute = true;
     notifyListeners();
     try {
-      final route = await _routeService.fetchRoute(origin, destination);
+      final route = await _routeService.fetchRoute(waypoints);
       // Ignore stale responses if the endpoints changed mid-fetch.
-      if (origin != _routeOrigin || destination != _routeDestination) return;
+      if (!listEquals(waypoints, _plannedWaypoints)) return;
       _plannedRoute = route;
       requestCameraBounds(LatLngBounds.fromPoints(route.points));
     } on RouteException catch (e) {
@@ -351,14 +432,21 @@ class AppState with ChangeNotifier {
       final to = _routeDestinationLabel.isEmpty
           ? 'Destination'
           : _routeDestinationLabel;
+      final stops = _routeStops.isEmpty
+          ? ''
+          : ' (+${_routeStops.length} stop${_routeStops.length == 1 ? '' : 's'})';
       await _client.startRoute(
         routeFilePath: file.path,
         durationSeconds: durationMinutes * 60,
-        label: '$from → $to',
+        label: '$from → $to$stops',
+        fromLabel: from,
+        toLabel: to,
+        distanceMeters: route.distanceMeters,
       );
       _isMocking = true;
       _ignoreInactiveUntil = DateTime.now().add(const Duration(seconds: 3));
       notifyListeners();
+      unawaited(_maybeRequestBatteryExemption());
       return MockToggleResult.started;
     } on PlatformException catch (e) {
       _lastError = e.message ?? 'Could not start the route simulation';
@@ -376,6 +464,47 @@ class AppState with ChangeNotifier {
     _isMocking = false;
     _mockStatus = MockStatus.inactive;
     _activeRoutePoints = null;
+    notifyListeners();
+  }
+
+  /// Long route simulations die if the system puts the app to sleep — ask
+  /// for the battery-optimization exemption once, on the first route start.
+  Future<void> _maybeRequestBatteryExemption() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('asked_battery_exemption') == true) return;
+      await prefs.setBool('asked_battery_exemption', true);
+      if (!await Permission.ignoreBatteryOptimizations.isGranted) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    } catch (_) {
+      // The setup sheet offers this again manually.
+    }
+  }
+
+  // --------------------------------------------------------------- history
+
+  /// Loads past mock sessions recorded by the native service (covers
+  /// sessions started from tiles/widgets too). Newest first.
+  Future<void> loadHistory() async {
+    try {
+      final raw = await _client.getHistoryJson();
+      final data = jsonDecode(raw) as List;
+      _history = data
+          .map((item) =>
+              MockHistoryEntry.fromJson((item as Map).cast<String, dynamic>()))
+          .toList()
+          .reversed
+          .toList();
+      notifyListeners();
+    } catch (_) {
+      // Keep the previous list.
+    }
+  }
+
+  Future<void> clearHistory() async {
+    await _client.clearHistory();
+    _history = [];
     notifyListeners();
   }
 
@@ -412,6 +541,10 @@ class AppState with ChangeNotifier {
     final wasMocking = _isMocking;
     _mockStatus = status;
     _isMocking = status.active;
+
+    // A session started or ended (possibly from a tile/widget/notification):
+    // refresh the recorded history.
+    if (wasMocking != status.active) unawaited(loadHistory());
 
     // A fixed mock started outside the app (quick-settings tile, widget)
     // while the UI is open: move the pin to what is actually being mocked.

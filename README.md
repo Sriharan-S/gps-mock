@@ -9,19 +9,25 @@ A Flutter-based Android app for mocking/spoofing GPS locations on your device. S
 ## ✨ Features
 
 ### Core
-- **🗺️ Interactive Map**: Pick your mock location by panning/zooming the OpenStreetMap-based map (with automatic dark mode) — the app opens where you left off, or calibrated to your real position when mocking is off
+- **🧭 Three-tab layout**: a persistent **Map**, a **Saved** locations list, and a **History** log — all from a bottom navigation bar
+- **🗺️ Interactive Map**: Pick your mock location by panning/zooming the map — opens where you left off, or calibrated to your real position when mocking is off
+- **🎨 Switchable map styles**: Standard, Humanitarian, Topographic, Satellite and Dark basemaps — all free and keyless
+- **🧭 Compass**: rotate the map with two fingers; tap the compass to snap back to north
+- **📌 Saved locations on the map**: favorites show as dots when zoomed out and as named pins when you zoom in
 - **🔍 Smart Location Search**: Fast, typo-tolerant place search with named suggestions (powered by Photon/OpenStreetMap — no API key needed)
 - **⭐ Favorites**: Save frequently used locations; selecting one jumps the map straight to it. Delete with undo
+- **🕑 History**: Every mock session is logged — fixed spots and routes (from → to, distance, planned vs. actual duration, when started/arrived/ended) — including sessions started from tiles and widgets
 - **⚡ Real-time Mocking**: Start/stop GPS mocking with a single tap; survives closing the app (foreground service with a Stop action in the notification)
+- **🚨 Honest failure reporting**: if Android rejects the mock (e.g. GPS Mock isn't selected as the mock location app), a heads-up notification appears immediately — the app never pretends to mock when it isn't
 
 ### 🧭 Mock Navigation Movement
 Simulate actually *travelling* a route — perfect for testing turn-by-turn navigation in My Globe:
 
-1. Switch the bottom card to **Route** mode
-2. Pick a start and destination (search, favorites, or the map pin) — e.g. **Chennai → Salem**
+1. Tap the **Directions** button (or switch the bottom panel to **Route**)
+2. Pick a start and destination (search, favorites, or the map pin) — e.g. **Chennai → Salem** — and add **stops** in between if you like
 3. GPS Mock fetches the real driving route (free [OSRM](http://project-osrm.org/) routing, no key needed) and shows it on the map with distance and a realistic duration
-4. Set **how long the trip should take** (prefilled with the realistic estimate — shorten it to fast-forward)
-5. **START ROUTE**: your device's GPS now moves along the actual roads with correct **speed and bearing**, arriving exactly when the timer ends
+4. Choose how long the trip should take — either a **duration** in minutes, or an **"arrive by"** time/date (GPS Mock works out the pace)
+5. **START ROUTE**: your device's GPS now moves along the actual roads with correct **speed and bearing**, arriving exactly on schedule
 
 The simulation runs natively in the foreground service, so it keeps driving even if you close the app. Reopen anytime to see live progress, remaining time, and a camera-follow mode.
 

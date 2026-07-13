@@ -1,15 +1,13 @@
 package com.sriharan.gps_mock
 
 import android.app.Activity
-import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 
 /**
- * Invisible trampoline used by quick-settings tiles and home-screen widgets.
- * Starting a location foreground service directly from the background is
- * restricted on newer Android versions; briefly entering the foreground via
- * this transparent activity makes the start reliable everywhere.
+ * Invisible trampoline used as a fallback by quick-settings tiles and by
+ * home-screen widgets. Starting a location foreground service directly from
+ * the background can be restricted; briefly entering the foreground via this
+ * transparent activity makes the start reliable everywhere.
  */
 class MockControlActivity : Activity() {
 
@@ -17,37 +15,12 @@ class MockControlActivity : Activity() {
         super.onCreate(savedInstanceState)
         when (intent?.action) {
             ACTION_TOGGLE_FAVORITE ->
-                intent.getStringExtra(EXTRA_FAVORITE_ID)?.let { toggleFavorite(it) }
-            ACTION_STOP_MOCK -> stopMock()
+                intent.getStringExtra(EXTRA_FAVORITE_ID)?.let {
+                    MockController.toggleFavoriteDirect(this, it)
+                }
+            ACTION_STOP_MOCK -> MockController.stopDirect(this)
         }
         finish()
-    }
-
-    private fun toggleFavorite(favoriteId: String) {
-        val activeId = MockStateStore.getActiveCommand(this)?.optString("favoriteId")
-        if (activeId == favoriteId) {
-            stopMock()
-            return
-        }
-        val favorite = MockStateStore.findFavorite(this, favoriteId) ?: return
-        val serviceIntent = Intent(this, MockingService::class.java).apply {
-            action = MockingService.ACTION_START_FIXED
-            putExtra(MockingService.EXTRA_LAT, favorite.latitude)
-            putExtra(MockingService.EXTRA_LNG, favorite.longitude)
-            putExtra(MockingService.EXTRA_LABEL, favorite.name)
-            putExtra(MockingService.EXTRA_FAVORITE_ID, favorite.id)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
-    }
-
-    private fun stopMock() {
-        val serviceIntent = Intent(this, MockingService::class.java)
-            .setAction(MockingService.ACTION_STOP)
-        startService(serviceIntent)
     }
 
     companion object {

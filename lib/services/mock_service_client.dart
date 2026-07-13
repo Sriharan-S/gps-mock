@@ -67,12 +67,36 @@ class MockServiceClient {
     required String routeFilePath,
     required int durationSeconds,
     required String label,
+    String? fromLabel,
+    String? toLabel,
+    double? distanceMeters,
   }) async {
     await platform.invokeMethod('startRoute', {
       'routeFile': routeFilePath,
       'durationSeconds': durationSeconds,
       'label': label,
+      'fromLabel': fromLabel,
+      'toLabel': toLabel,
+      'distanceMeters': distanceMeters,
     });
+  }
+
+  /// Past mock sessions recorded natively by the service (newest last), as
+  /// a JSON array string; empty array when none.
+  Future<String> getHistoryJson() async {
+    try {
+      return await platform.invokeMethod<String>('getHistory') ?? '[]';
+    } catch (_) {
+      return '[]';
+    }
+  }
+
+  Future<void> clearHistory() async {
+    try {
+      await platform.invokeMethod('clearHistory');
+    } catch (_) {
+      // Non-critical.
+    }
   }
 
   Future<void> stopMocking() async {

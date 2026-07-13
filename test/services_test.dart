@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gps_mock/models/location_item.dart';
+import 'package:gps_mock/models/mock_history_entry.dart';
 import 'package:gps_mock/services/route_service.dart';
 import 'package:gps_mock/services/search_service.dart';
 
@@ -131,6 +132,44 @@ void main() {
         address: 'Y',
       );
       expect(item.id, isNotEmpty);
+    });
+  });
+
+  group('MockHistoryEntry', () {
+    test('parses a completed route session', () {
+      final entry = MockHistoryEntry.fromJson({
+        'mode': 'route',
+        'fromLabel': 'Chennai',
+        'toLabel': 'Salem',
+        'distanceMeters': 340000,
+        'durationSeconds': 600,
+        'startedAt': 1000000,
+        'arrivedAt': 1600000,
+        'endedAt': 1700000,
+        'arrived': true,
+      });
+
+      expect(entry.isRoute, isTrue);
+      expect(entry.isRunning, isFalse);
+      expect(entry.fromLabel, 'Chennai');
+      expect(entry.toLabel, 'Salem');
+      expect(entry.arrived, isTrue);
+      expect(entry.arrivedAt, isNotNull);
+      expect(entry.duration.inMilliseconds, 700000);
+    });
+
+    test('treats a missing endedAt as a still-running session', () {
+      final entry = MockHistoryEntry.fromJson({
+        'mode': 'fixed',
+        'label': 'Home',
+        'lat': 11.5,
+        'lng': 77.9,
+        'startedAt': 1000000,
+      });
+
+      expect(entry.isRunning, isTrue);
+      expect(entry.endedAt, isNull);
+      expect(entry.latitude, 11.5);
     });
   });
 }
