@@ -39,10 +39,11 @@ Add up to **4 tiles** (one per saved favorite) to your notification shade. Toggl
 - **Route status widget**: shows the running mock route's remaining time, progress bar, and a periodically refreshed map snapshot of the simulated position
 
 ### 🎨 Quality of life
-- Material Design 3 with automatic **light/dark theme** (including a dark map style)
+- Material Design 3 with automatic **light/dark theme** (including a dark basemap)
 - Warning banner + guided setup when the app isn't selected as the mock location app (and no nagging when it already is)
-- Share the selected location as a Google Maps link
-- Tooltips, larger touch targets and screen-reader labels throughout
+- **Setup & permissions checklist** (overflow menu): mock location app, location, notifications, and battery-optimization exemption — with one-tap fixes
+- Share the selected location as an OpenStreetMap link
+- Tooltips, 48dp touch targets and screen-reader labels/announcements throughout
 
 ## 📋 Prerequisites
 
@@ -100,19 +101,23 @@ No API keys of any kind — the map, search, and routing all use free OpenStreet
 
 ## 🚀 Usage
 
+GPS Mock has three tabs on the bottom navigation bar: **Map**, **Saved**, and **History**.
+
 ### Fixed location
 1. **📱 Launch the app** and grant location permissions when prompted
-2. **🔓 Enable mock location** via the setup banner (only shown if not configured yet)
+2. **🔓 Enable mock location** via the setup banner (only shown if not configured yet) — or run through the full **Setup & permissions** checklist from the overflow menu
 3. **📍 Select a location** by panning/zooming the map or using the search bar
-4. **▶️ Tap START** to begin mocking your GPS location
-5. **⏹️ Tap STOP** (in the app or the notification) to return to your real GPS location
+4. **▶️ Tap START MOCKING** to begin mocking your GPS location
+5. **⏹️ Tap STOP MOCKING** (in the app or the notification) to return to your real GPS location
+
+If Android ever refuses the mock (e.g. GPS Mock got deselected as the mock location app), you'll get an immediate notification telling you what's wrong and a button to fix it — the app never pretends to be mocking when it isn't.
 
 ### Mock navigation (route simulation)
-1. Switch the bottom card to **Route**
-2. Choose **start** and **destination** (defaults offer the current pin and your favorites)
-3. Review the route, set the trip **duration in minutes**
+1. Tap the **Directions** button, or switch the bottom panel to **Route**
+2. Choose **start** and **destination** (search, favorites, or the current map pin) — add **stops** in between if needed
+3. Review the route, then set the trip length: either a **duration in minutes**, or an **"arrive by"** time/date
 4. **▶️ START ROUTE** — watch the mock position drive the route; other apps (like My Globe) see a moving GPS fix with real speed/bearing
-5. On arrival the position holds at the destination until you stop
+5. On arrival the position holds at the destination until you stop; the camera-follow button keeps the map centered on the moving marker
 
 ### 💾 Saving favorites
 
@@ -121,7 +126,11 @@ No API keys of any kind — the map, search, and routing all use free OpenStreet
 3. Enter a name for the location
 4. Tap **Save**
 
-Access your saved locations by tapping the **📋 list icon** in the search bar.
+Open the **Saved** tab to see all your favorites (shown as a mini map + name), jump to one, or delete it (with undo). Saved locations also appear directly on the map — as small dots when zoomed out, and as named pins once you zoom in.
+
+### 🕑 History
+
+The **History** tab logs every mock session — fixed locations and simulated routes, including ones started from a quick-settings tile or a widget. Each entry shows where (or from → to), when it started, the planned vs. actual duration, and when it arrived/ended. Tap an entry to jump back to that location on the map.
 
 ### 📟 Quick settings tiles
 1. Save at least one favorite
