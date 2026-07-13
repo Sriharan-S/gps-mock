@@ -1,0 +1,4 @@
+<resources>
+    <string name="widget_favorite_description">Toggle mocking of a saved location with one tap.</string>
+    <string name="widget_navigation_description">Live progress and map snapshot of the running mock route.</string>
+</resources>

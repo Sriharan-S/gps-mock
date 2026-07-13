@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/ui/splash_screen.dart';
+import 'package:provider/provider.dart';
 
 void main() {
   runApp(const MockGpsApp());
@@ -20,10 +20,18 @@ class MockGpsApp extends StatelessWidget {
         theme: ThemeData(
           colorScheme: ColorScheme.fromSeed(
             seedColor: Colors.deepPurple,
+            brightness: Brightness.light,
+          ),
+          useMaterial3: true,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.deepPurple,
             brightness: Brightness.dark,
           ),
           useMaterial3: true,
         ),
+        themeMode: ThemeMode.system,
         home: const SplashScreen(),
       ),
     );

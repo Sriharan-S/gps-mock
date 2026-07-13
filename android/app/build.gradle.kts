@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Local signing credentials (gitignored — see android/key.properties.example).
+// CI supplies STORE_PASSWORD/KEY_PASSWORD/KEY_ALIAS as env vars instead.
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(keystorePropertiesFile.inputStream())
 }
 
 android {
@@ -28,11 +38,14 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystoreFile = file("upload-keystore.jks")
-            storeFile = keystoreFile
-            storePassword = System.getenv("STORE_PASSWORD") ?: "PASSWORD"
-            keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: "PASSWORD"
+            storeFile = file(keystoreProperties.getProperty("storeFile") ?: "upload-keystore.jks")
+            storePassword = keystoreProperties.getProperty("storePassword")
+                ?: System.getenv("STORE_PASSWORD")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+                ?: System.getenv("KEY_ALIAS")
+                ?: "upload"
+            keyPassword = keystoreProperties.getProperty("keyPassword")
+                ?: System.getenv("KEY_PASSWORD")
         }
     }
 

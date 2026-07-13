@@ -1,17 +1,14 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gps_mock/main.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  testWidgets('App shows splash screen on startup', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('App shows splash screen on startup', (
+    WidgetTester tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+
     await tester.pumpWidget(const MockGpsApp());
 
     // Verify that the MaterialApp renders
@@ -19,5 +16,10 @@ void main() {
 
     // Verify splash screen is shown with logo
     expect(find.byType(Image), findsOneWidget);
+
+    // Dispose the tree, then let the splash minimum-display timer fire
+    // harmlessly so no timers are pending when the test ends.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
   });
 }

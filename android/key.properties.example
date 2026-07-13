@@ -1,0 +1,9 @@
+## Copy this file to android/key.properties (which is gitignored) and fill
+## in the values from your keystore. build.gradle.kts reads this file for
+## local release builds; CI instead supplies STORE_PASSWORD/KEY_PASSWORD/
+## KEY_ALIAS/ANDROID_KEYSTORE_BASE64 as GitHub Actions secrets.
+
+storeFile=upload-keystore.jks
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyAlias=upload
+keyPassword=YOUR_KEY_PASSWORD
