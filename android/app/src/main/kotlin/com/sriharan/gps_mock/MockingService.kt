@@ -15,7 +15,9 @@ import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 class MockingService : Service() {
     private var job: Job? = null
@@ -39,12 +41,26 @@ class MockingService : Service() {
 
         MockStateStore.setActiveCommand(this, command)
         startForeground(NOTIFICATION_ID, buildNotification(notificationText(command)))
-        startFixedMocking(command)
+        when (command.optString("mode", MODE_FIXED)) {
+            MODE_ROUTE -> startRouteMocking(command)
+            else -> startFixedMocking(command)
+        }
         return START_STICKY
     }
 
     private fun commandFromIntent(intent: Intent?): JSONObject? {
         intent ?: return null
+        if (intent.action == ACTION_START_ROUTE) {
+            val routeFile = intent.getStringExtra(EXTRA_ROUTE_FILE) ?: return null
+            val durationSeconds = intent.getIntExtra(EXTRA_DURATION_SECONDS, 0)
+            if (durationSeconds <= 0) return null
+            return JSONObject().apply {
+                put("mode", MODE_ROUTE)
+                put("routeFile", routeFile)
+                put("durationSeconds", durationSeconds)
+                put("label", intent.getStringExtra(EXTRA_LABEL) ?: "")
+            }
+        }
         if (!intent.hasExtra(EXTRA_LAT) || !intent.hasExtra(EXTRA_LNG)) return null
         return JSONObject().apply {
             put("mode", MODE_FIXED)
@@ -58,6 +74,7 @@ class MockingService : Service() {
     private fun notificationText(command: JSONObject): String {
         val label = command.optString("label")
         if (label.isNotEmpty()) return label
+        if (command.optString("mode") == MODE_ROUTE) return "Simulating route"
         return "${command.optDouble("lat")}, ${command.optDouble("lng")}"
     }
 
@@ -100,11 +117,28 @@ class MockingService : Service() {
             ?.notify(NOTIFICATION_ID, buildNotification(text, title))
     }
 
+    // ------------------------------------------------------------ fixed mode
+
     private fun startFixedMocking(command: JSONObject) {
         val lat = command.getDouble("lat")
         val lng = command.getDouble("lng")
         val label = command.optString("label")
         val favoriteId = command.optString("favoriteId")
+
+        // Publish immediately so getMockStatus reflects the new state without
+        // waiting for the first tick.
+        status = mapOf(
+            "active" to true,
+            "mode" to MODE_FIXED,
+            "lat" to lat,
+            "lng" to lng,
+            "label" to label,
+            "favoriteId" to favoriteId,
+            "progress" to 0.0,
+            "remainingSeconds" to 0,
+            "bearing" to 0.0,
+            "arrived" to false,
+        )
 
         job?.cancel()
         job = scope.launch {
@@ -113,22 +147,177 @@ class MockingService : Service() {
 
             while (isActive) {
                 pushMockLocation(locationManager, lat, lng, bearing = 0f, speedMps = 0f)
-                status = mapOf(
-                    "active" to true,
-                    "mode" to MODE_FIXED,
-                    "lat" to lat,
-                    "lng" to lng,
-                    "label" to label,
-                    "favoriteId" to favoriteId,
-                    "progress" to 0.0,
-                    "remainingSeconds" to 0,
-                    "bearing" to 0.0,
-                    "arrived" to false,
-                )
                 delay(1000)
             }
         }
     }
+
+    // ------------------------------------------------------------ route mode
+
+    private fun startRouteMocking(command: JSONObject) {
+        val routeFile = command.optString("routeFile")
+        val durationSeconds = command.optInt("durationSeconds", 0)
+        val label = command.optString("label")
+
+        val points = loadRoutePoints(routeFile)
+        if (points.size < 2 || durationSeconds <= 0) {
+            stopMocking()
+            return
+        }
+
+        // Remember when the route began so a sticky restart resumes mid-route
+        // instead of starting over.
+        if (!command.has("startedAtMillis")) {
+            command.put("startedAtMillis", System.currentTimeMillis())
+            MockStateStore.setActiveCommand(this, command)
+        }
+        val startedAtMillis = command.getLong("startedAtMillis")
+
+        // Precompute cumulative distances along the polyline.
+        val cumulative = DoubleArray(points.size)
+        for (i in 1 until points.size) {
+            cumulative[i] = cumulative[i - 1] + distanceMeters(points[i - 1], points[i])
+        }
+        val totalDistance = cumulative.last()
+        if (totalDistance <= 0.0) {
+            stopMocking()
+            return
+        }
+        val cruiseSpeed = (totalDistance / durationSeconds).toFloat()
+
+        publishRouteStatus(
+            points.first(), label, 0.0, durationSeconds, 0f, cruiseSpeed, false, routeFile
+        )
+
+        job?.cancel()
+        job = scope.launch {
+            val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            installTestProvider(locationManager)
+
+            var tick = 0
+            while (isActive) {
+                val elapsed = (System.currentTimeMillis() - startedAtMillis) / 1000.0
+                val fraction = (elapsed / durationSeconds).coerceIn(0.0, 1.0)
+                val arrived = fraction >= 1.0
+                val (position, bearing) = positionAlongRoute(
+                    points, cumulative, totalDistance * fraction
+                )
+                val speed = if (arrived) 0f else cruiseSpeed
+                pushMockLocation(locationManager, position[0], position[1], bearing, speed)
+
+                val remaining = (durationSeconds - elapsed).coerceAtLeast(0.0).toInt()
+                publishRouteStatus(
+                    position, label, fraction, remaining, bearing, speed, arrived, routeFile
+                )
+
+                if (arrived) {
+                    if (tick % 60 == 0) {
+                        updateNotification("$label · arrived, holding position", "Mock route finished")
+                    }
+                } else if (tick % 5 == 0) {
+                    updateNotification(
+                        "$label · ${formatRemaining(remaining)} left", "Mock route active"
+                    )
+                }
+                tick++
+                delay(1000)
+            }
+        }
+    }
+
+    private fun publishRouteStatus(
+        position: DoubleArray,
+        label: String,
+        progress: Double,
+        remainingSeconds: Int,
+        bearing: Float,
+        speedMps: Float,
+        arrived: Boolean,
+        routeFile: String,
+    ) {
+        status = mapOf(
+            "active" to true,
+            "mode" to MODE_ROUTE,
+            "lat" to position[0],
+            "lng" to position[1],
+            "label" to label,
+            "favoriteId" to "",
+            "progress" to progress,
+            "remainingSeconds" to remainingSeconds,
+            "bearing" to bearing.toDouble(),
+            "speedMps" to speedMps.toDouble(),
+            "arrived" to arrived,
+            "routeFile" to routeFile,
+        )
+    }
+
+    /** Reads a JSON array of [lat, lng] pairs written by the Flutter side. */
+    private fun loadRoutePoints(path: String): List<DoubleArray> {
+        return try {
+            val array = JSONArray(File(path).readText())
+            (0 until array.length()).mapNotNull { index ->
+                val pair = array.optJSONArray(index) ?: return@mapNotNull null
+                if (pair.length() < 2) return@mapNotNull null
+                doubleArrayOf(pair.getDouble(0), pair.getDouble(1))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Interpolates the position [targetMeters] along the polyline and the
+     *  bearing of the segment it falls on. */
+    private fun positionAlongRoute(
+        points: List<DoubleArray>,
+        cumulative: DoubleArray,
+        targetMeters: Double,
+    ): Pair<DoubleArray, Float> {
+        if (targetMeters <= 0.0) {
+            return points[0] to bearingDegrees(points[0], points[1])
+        }
+        if (targetMeters >= cumulative.last()) {
+            val last = points.size - 1
+            return points[last] to bearingDegrees(points[last - 1], points[last])
+        }
+
+        var index = cumulative.toList().binarySearch { it.compareTo(targetMeters) }
+        if (index < 0) index = -index - 1
+        if (index <= 0) index = 1
+
+        val segmentStart = cumulative[index - 1]
+        val segmentLength = cumulative[index] - segmentStart
+        val t = if (segmentLength <= 0.0) 0.0 else (targetMeters - segmentStart) / segmentLength
+        val from = points[index - 1]
+        val to = points[index]
+        val position = doubleArrayOf(
+            from[0] + (to[0] - from[0]) * t,
+            from[1] + (to[1] - from[1]) * t,
+        )
+        return position to bearingDegrees(from, to)
+    }
+
+    private fun distanceMeters(from: DoubleArray, to: DoubleArray): Double {
+        val results = FloatArray(1)
+        Location.distanceBetween(from[0], from[1], to[0], to[1], results)
+        return results[0].toDouble()
+    }
+
+    private fun bearingDegrees(from: DoubleArray, to: DoubleArray): Float {
+        val results = FloatArray(2)
+        Location.distanceBetween(from[0], from[1], to[0], to[1], results)
+        return (results[1] + 360f) % 360f
+    }
+
+    private fun formatRemaining(seconds: Int): String {
+        val minutes = seconds / 60
+        return when {
+            minutes >= 60 -> "${minutes / 60} h ${minutes % 60} min"
+            minutes >= 1 -> "$minutes min"
+            else -> "$seconds s"
+        }
+    }
+
+    // ------------------------------------------------------------- providers
 
     private fun installTestProvider(locationManager: LocationManager) {
         try {

@@ -11,6 +11,7 @@ class MockStatus {
   final double progress; // 0..1 (route mode only)
   final int remainingSeconds;
   final double bearing;
+  final double speedMps;
   final bool arrived;
   final String? routeFile;
 
@@ -23,6 +24,7 @@ class MockStatus {
     this.progress = 0,
     this.remainingSeconds = 0,
     this.bearing = 0,
+    this.speedMps = 0,
     this.arrived = false,
     this.routeFile,
   });
@@ -38,6 +40,7 @@ class MockStatus {
     progress: (map['progress'] as num?)?.toDouble() ?? 0,
     remainingSeconds: (map['remainingSeconds'] as num?)?.toInt() ?? 0,
     bearing: (map['bearing'] as num?)?.toDouble() ?? 0,
+    speedMps: (map['speedMps'] as num?)?.toDouble() ?? 0,
     arrived: map['arrived'] == true,
     routeFile: map['routeFile'] as String?,
   );

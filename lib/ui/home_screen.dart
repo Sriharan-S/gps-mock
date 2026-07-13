@@ -9,6 +9,7 @@ import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/services/search_service.dart';
 import 'package:gps_mock/ui/favorites_sheet.dart';
 import 'package:gps_mock/ui/onboarding_dialog.dart';
+import 'package:gps_mock/ui/route_panel.dart';
 import 'package:gps_mock/ui/save_favorite_dialog.dart';
 import 'package:gps_mock/utils/map_styles.dart';
 import 'package:provider/provider.dart';
@@ -27,6 +28,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
   int _handledCameraToken = 0;
   String _lastSearchQuery = '';
+  bool _routeMode = false;
+  bool _followRoute = true;
+  LatLng? _lastFollowedPosition;
 
   @override
   void initState() {
@@ -56,22 +60,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _animateTo(LatLng target, double zoom) async {
+  Future<void> _animateTo(CameraRequest request) async {
     final controller = await _controller.future;
-    controller.animateCamera(CameraUpdate.newLatLngZoom(target, zoom));
+    final bounds = request.bounds;
+    final target = request.target;
+    if (bounds != null) {
+      controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 60));
+    } else if (target != null) {
+      controller.animateCamera(CameraUpdate.newLatLngZoom(target, request.zoom));
+    }
   }
 
   /// Executes pending one-shot camera requests coming from the app state
-  /// (startup calibration, search selection, favorites, my-location).
+  /// (startup calibration, search selection, favorites, my-location,
+  /// route-fit).
   void _handleCameraRequest(AppState appState) {
     final request = appState.cameraRequest;
     if (request != null && request.token != _handledCameraToken) {
       _handledCameraToken = request.token;
-      _animateTo(request.target, request.zoom);
+      _animateTo(request);
     }
   }
 
+  /// While navigating with camera-follow enabled, tracks the moving mock
+  /// position.
+  void _handleFollowRoute(AppState appState) {
+    if (!appState.isNavigating || !_followRoute) return;
+    final position = LatLng(
+      appState.mockStatus.latitude,
+      appState.mockStatus.longitude,
+    );
+    if (position == _lastFollowedPosition) return;
+    _lastFollowedPosition = position;
+    _controller.future.then(
+      (controller) =>
+          controller.animateCamera(CameraUpdate.newLatLng(position)),
+    );
+  }
+
   Future<void> _onCameraIdle() async {
+    // While a route simulation runs the camera follows the moving marker —
+    // don't treat that as the user picking a new pin location.
+    if (context.read<AppState>().isNavigating) return;
+
     final controller = await _controller.future;
     final region = await controller.getVisibleRegion();
     final center = LatLng(
@@ -102,11 +133,75 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  Set<Polyline> _buildPolylines(AppState appState) {
+    final points = appState.routePolylinePoints;
+    if (points == null || (!_routeMode && !appState.isNavigating)) {
+      return const {};
+    }
+    return {
+      Polyline(
+        polylineId: const PolylineId('route'),
+        points: points,
+        width: 5,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    };
+  }
+
+  Set<Marker> _buildMarkers(AppState appState) {
+    final markers = <Marker>{};
+    if (_routeMode || appState.isNavigating) {
+      final origin = appState.routeOrigin;
+      if (origin != null) {
+        markers.add(
+          Marker(
+            markerId: const MarkerId('route_origin'),
+            position: origin,
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueGreen,
+            ),
+            infoWindow: InfoWindow(title: appState.routeOriginLabel),
+          ),
+        );
+      }
+      final destination = appState.routeDestination;
+      if (destination != null) {
+        markers.add(
+          Marker(
+            markerId: const MarkerId('route_destination'),
+            position: destination,
+            icon: BitmapDescriptor.defaultMarkerWithHue(
+              BitmapDescriptor.hueRed,
+            ),
+            infoWindow: InfoWindow(title: appState.routeDestinationLabel),
+          ),
+        );
+      }
+    }
+    if (appState.isNavigating) {
+      final status = appState.mockStatus;
+      markers.add(
+        Marker(
+          markerId: const MarkerId('mock_position'),
+          position: LatLng(status.latitude, status.longitude),
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            BitmapDescriptor.hueAzure,
+          ),
+          rotation: status.bearing,
+          flat: true,
+          anchor: const Offset(0.5, 0.5),
+        ),
+      );
+    }
+    return markers;
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     _handleCameraRequest(appState);
+    _handleFollowRoute(appState);
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -131,25 +226,49 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               if (!_controller.isCompleted) _controller.complete(controller);
             },
             onCameraIdle: _onCameraIdle,
-            markers: const {},
+            polylines: _buildPolylines(appState),
+            markers: _buildMarkers(appState),
           ),
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 30),
-              child: Semantics(
-                label: "Selected mock location pin",
-                child: Icon(
-                  Icons.location_on,
-                  size: 50,
-                  color: Theme.of(context).colorScheme.primary,
+          if (!appState.isNavigating)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 30),
+                child: Semantics(
+                  label: "Selected mock location pin",
+                  child: Icon(
+                    Icons.location_on,
+                    size: 50,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                 ),
               ),
             ),
-          ),
           if (appState.isMockLocationApp == false) _buildSetupBanner(context),
+          if (appState.isNavigating) _buildFollowButton(context),
           _buildMyLocationButton(context),
           _buildControlsOverlay(context, appState),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFollowButton(BuildContext context) {
+    return Positioned(
+      right: 20,
+      bottom: 280,
+      child: FloatingActionButton.small(
+        heroTag: "follow_route",
+        tooltip: _followRoute
+            ? "Stop following mock position"
+            : "Follow mock position",
+        backgroundColor: _followRoute
+            ? Theme.of(context).colorScheme.primaryContainer
+            : null,
+        onPressed: () => setState(() {
+          _followRoute = !_followRoute;
+          _lastFollowedPosition = null;
+        }),
+        child: const Icon(Icons.navigation),
       ),
     );
   }
@@ -382,7 +501,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildControlsOverlay(BuildContext context, AppState appState) {
-    final location = appState.currentLocation;
+    final showRoutePanel = _routeMode || appState.isNavigating;
     return Positioned(
       bottom: 40,
       left: 20,
@@ -396,65 +515,100 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                appState.currentAddress,
-                style: Theme.of(context).textTheme.titleMedium,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                location == null
-                    ? "—"
-                    : "${location.latitude.toStringAsFixed(5)}, "
-                          "${location.longitude.toStringAsFixed(5)}",
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(
-                    tooltip: "Save as favorite",
-                    icon: const Icon(Icons.favorite_border),
-                    onPressed: location == null
-                        ? null
-                        : () => showDialog(
-                            context: context,
-                            builder: (_) => const SaveFavoriteDialog(),
-                          ),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(
+                    value: false,
+                    label: Text("Fixed"),
+                    icon: Icon(Icons.location_on, size: 16),
                   ),
-                  FilledButton.icon(
-                    onPressed: () => _toggleMocking(context),
-                    icon: Icon(
-                      appState.isMocking ? Icons.stop : Icons.play_arrow,
-                    ),
-                    label: Text(appState.isMocking ? "STOP" : "START"),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: appState.isMocking
-                          ? Colors.red
-                          : Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 32,
-                        vertical: 12,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: "Share location",
-                    icon: const Icon(Icons.share),
-                    onPressed: location == null
-                        ? null
-                        : () => _shareLocation(appState),
+                  ButtonSegment(
+                    value: true,
+                    label: Text("Route"),
+                    icon: Icon(Icons.route, size: 16),
                   ),
                 ],
+                selected: {showRoutePanel},
+                showSelectedIcon: false,
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onSelectionChanged: appState.isNavigating
+                    ? null // locked to Route while a simulation runs
+                    : (selection) =>
+                          setState(() => _routeMode = selection.first),
               ),
+              const SizedBox(height: 12),
+              if (showRoutePanel)
+                const RoutePanel()
+              else
+                _buildFixedControls(context, appState),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildFixedControls(BuildContext context, AppState appState) {
+    final location = appState.currentLocation;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          appState.currentAddress,
+          style: Theme.of(context).textTheme.titleMedium,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          location == null
+              ? "—"
+              : "${location.latitude.toStringAsFixed(5)}, "
+                    "${location.longitude.toStringAsFixed(5)}",
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            IconButton(
+              tooltip: "Save as favorite",
+              icon: const Icon(Icons.favorite_border),
+              onPressed: location == null
+                  ? null
+                  : () => showDialog(
+                      context: context,
+                      builder: (_) => const SaveFavoriteDialog(),
+                    ),
+            ),
+            FilledButton.icon(
+              onPressed: () => _toggleMocking(context),
+              icon: Icon(appState.isMocking ? Icons.stop : Icons.play_arrow),
+              label: Text(appState.isMocking ? "STOP" : "START"),
+              style: FilledButton.styleFrom(
+                backgroundColor: appState.isMocking
+                    ? Colors.red
+                    : Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 12,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: "Share location",
+              icon: const Icon(Icons.share),
+              onPressed: location == null
+                  ? null
+                  : () => _shareLocation(appState),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
