@@ -61,6 +61,9 @@ class MainActivity : FlutterActivity() {
                     val json = call.argument<String>("json")
                     if (json != null) {
                         MockStateStore.setFavoritesJson(this, json)
+                        // Tiles and widgets mirror the favorites list.
+                        com.sriharan.gps_mock.tiles.BaseFavoriteTileService.refreshAll(this)
+                        com.sriharan.gps_mock.widgets.FavoriteWidgetProvider.refreshAll(this)
                     }
                     result.success(null)
                 }

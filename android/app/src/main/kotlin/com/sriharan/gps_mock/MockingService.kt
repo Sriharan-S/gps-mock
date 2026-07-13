@@ -13,11 +13,19 @@ import android.location.provider.ProviderProperties
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.core.app.NotificationCompat
+import com.sriharan.gps_mock.tiles.BaseFavoriteTileService
+import com.sriharan.gps_mock.widgets.FavoriteWidgetProvider
+import com.sriharan.gps_mock.widgets.NavigationWidgetProvider
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MockingService : Service() {
     private var job: Job? = null
@@ -43,8 +51,13 @@ class MockingService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification(notificationText(command)))
         when (command.optString("mode", MODE_FIXED)) {
             MODE_ROUTE -> startRouteMocking(command)
-            else -> startFixedMocking(command)
+            else -> {
+                startFixedMocking(command)
+                NavigationWidgetProvider.pushIdle(this)
+            }
         }
+        BaseFavoriteTileService.refreshAll(this)
+        FavoriteWidgetProvider.refreshAll(this)
         return START_STICKY
     }
 
@@ -219,9 +232,40 @@ class MockingService : Service() {
                         "$label · ${formatRemaining(remaining)} left", "Mock route active"
                     )
                 }
+
+                // Keep the navigation home-screen widget fresh (progress +
+                // map snapshot) roughly every 15 seconds while running.
+                if (tick % 15 == 0 && NavigationWidgetProvider.hasWidgets(this@MockingService)) {
+                    val snapshot = fetchStaticMapBitmap(position[0], position[1])
+                    NavigationWidgetProvider.push(this@MockingService, statusMap(), snapshot)
+                }
+
                 tick++
                 delay(1000)
             }
+        }
+    }
+
+    /** Downloads a small static-map image centred on the mock position for
+     *  the navigation widget. Returns null when no API key is configured or
+     *  the network fails — the widget then shows text-only progress. */
+    private fun fetchStaticMapBitmap(lat: Double, lng: Double): Bitmap? {
+        return try {
+            val key = packageManager
+                .getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+                .metaData?.getString("com.google.android.geo.API_KEY")
+            if (key.isNullOrEmpty() || key == "API_KEY_PLACEHOLDER") return null
+            val url = URL(
+                "https://maps.googleapis.com/maps/api/staticmap" +
+                    "?center=$lat,$lng&zoom=15&size=400x220" +
+                    "&markers=color:purple%7C$lat,$lng&key=$key"
+            )
+            val connection = url.openConnection() as HttpURLConnection
+            connection.connectTimeout = 8000
+            connection.readTimeout = 8000
+            connection.inputStream.use { BitmapFactory.decodeStream(it) }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -376,6 +420,9 @@ class MockingService : Service() {
         MockStateStore.setActiveCommand(this, null)
         status = null
         job?.cancel()
+        BaseFavoriteTileService.refreshAll(this)
+        FavoriteWidgetProvider.refreshAll(this)
+        NavigationWidgetProvider.pushIdle(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

@@ -42,6 +42,89 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- Invisible trampoline that lets tiles/widgets control mocking
+             without hitting background service-start restrictions. -->
+        <activity
+            android:name=".MockControlActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Quick-settings tiles: one per saved favorite (first four). -->
+        <service
+            android:name=".tiles.FavoriteTileService1"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_pin"
+            android:label="GPS Mock favorite 1"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".tiles.FavoriteTileService2"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_pin"
+            android:label="GPS Mock favorite 2"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".tiles.FavoriteTileService3"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_pin"
+            android:label="GPS Mock favorite 3"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".tiles.FavoriteTileService4"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_pin"
+            android:label="GPS Mock favorite 4"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Home-screen widgets -->
+        <receiver
+            android:name=".widgets.FavoriteWidgetProvider"
+            android:exported="false"
+            android:label="Favorite toggle">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_favorite_info" />
+        </receiver>
+        <activity
+            android:name=".widgets.FavoriteWidgetConfigActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+        <receiver
+            android:name=".widgets.NavigationWidgetProvider"
+            android:exported="false"
+            android:label="Mock route status">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_navigation_info" />
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

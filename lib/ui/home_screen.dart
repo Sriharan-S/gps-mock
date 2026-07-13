@@ -244,8 +244,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
             ),
           if (appState.isMockLocationApp == false) _buildSetupBanner(context),
-          if (appState.isNavigating) _buildFollowButton(context),
-          _buildMyLocationButton(context),
           _buildControlsOverlay(context, appState),
         ],
       ),
@@ -253,23 +251,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildFollowButton(BuildContext context) {
-    return Positioned(
-      right: 20,
-      bottom: 280,
-      child: FloatingActionButton.small(
-        heroTag: "follow_route",
-        tooltip: _followRoute
-            ? "Stop following mock position"
-            : "Follow mock position",
-        backgroundColor: _followRoute
-            ? Theme.of(context).colorScheme.primaryContainer
-            : null,
-        onPressed: () => setState(() {
-          _followRoute = !_followRoute;
-          _lastFollowedPosition = null;
-        }),
-        child: const Icon(Icons.navigation),
-      ),
+    return FloatingActionButton.small(
+      heroTag: "follow_route",
+      tooltip: _followRoute
+          ? "Stop following mock position"
+          : "Follow mock position",
+      backgroundColor: _followRoute
+          ? Theme.of(context).colorScheme.primaryContainer
+          : null,
+      onPressed: () => setState(() {
+        _followRoute = !_followRoute;
+        _lastFollowedPosition = null;
+      }),
+      child: const Icon(Icons.navigation),
     );
   }
 
@@ -321,27 +315,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildMyLocationButton(BuildContext context) {
-    return Positioned(
-      right: 20,
-      bottom: 220,
-      child: FloatingActionButton.small(
-        heroTag: "my_location",
-        tooltip: "Go to my real location",
-        onPressed: () async {
-          final moved = await context.read<AppState>().moveToRealLocation();
-          if (!moved && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  "Couldn't get your location. Check that location is "
-                  "enabled and permission is granted.",
-                ),
+    return FloatingActionButton.small(
+      heroTag: "my_location",
+      tooltip: "Go to my real location",
+      onPressed: () async {
+        final moved = await context.read<AppState>().moveToRealLocation();
+        if (!moved && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Couldn't get your location. Check that location is "
+                "enabled and permission is granted.",
               ),
-            );
-          }
-        },
-        child: const Icon(Icons.my_location),
-      ),
+            ),
+          );
+        }
+      },
+      child: const Icon(Icons.my_location),
     );
   }
 
@@ -506,7 +496,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       bottom: 40,
       left: 20,
       right: 20,
-      child: Card(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // Anchored above the card so they never overlap it, whatever the
+          // card's current height.
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (appState.isNavigating) ...[
+                _buildFollowButton(context),
+                const SizedBox(width: 8),
+              ],
+              _buildMyLocationButton(context),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildControlsCard(context, appState, showRoutePanel),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildControlsCard(
+    BuildContext context,
+    AppState appState,
+    bool showRoutePanel,
+  ) {
+    return Card(
         elevation: 8,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.95),
@@ -544,7 +562,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               else
                 _buildFixedControls(context, appState),
             ],
-          ),
         ),
       ),
     );

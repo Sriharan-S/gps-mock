@@ -97,6 +97,7 @@ class AppState with ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       _loadFavorites(prefs);
+      unawaited(_syncFavoritesToNative());
       final lastLat = prefs.getDouble('last_lat');
       final lastLng = prefs.getDouble('last_lng');
       if (lastLat != null && lastLng != null) {
@@ -112,6 +113,7 @@ class AppState with ChangeNotifier {
       if (status.active) {
         // The service kept mocking while the app was away — reflect it.
         _isMocking = true;
+        _mockStatus = status;
         _currentLocation = LatLng(status.latitude, status.longitude);
         if (status.label.isNotEmpty) _currentAddress = status.label;
       } else {
@@ -199,7 +201,9 @@ class AppState with ChangeNotifier {
     _currentAddress = address ?? _format(loc);
     unawaited(_persistLastLocation());
 
-    if (_isMocking) {
+    // Retarget a running fixed mock; never silently replace a running
+    // route simulation just because the pin moved.
+    if (_isMocking && !isNavigating) {
       unawaited(
         _client
             .startMocking(loc.latitude, loc.longitude, label: _currentAddress)
@@ -420,8 +424,20 @@ class AppState with ChangeNotifier {
         status.arrived != _mockStatus.arrived ||
         status.active != _isMocking;
 
+    final wasMocking = _isMocking;
     _mockStatus = status;
     _isMocking = status.active;
+
+    // A fixed mock started outside the app (quick-settings tile, widget)
+    // while the UI is open: move the pin to what is actually being mocked.
+    if (!wasMocking && status.active && status.mode == 'fixed') {
+      final serviceLocation = LatLng(status.latitude, status.longitude);
+      if (serviceLocation != _currentLocation) {
+        _currentLocation = serviceLocation;
+        if (status.label.isNotEmpty) _currentAddress = status.label;
+        requestCamera(serviceLocation, zoom: 16);
+      }
+    }
     if (!status.active) {
       _activeRoutePoints = null;
     } else if (isNavigating &&
@@ -501,6 +517,16 @@ class AppState with ChangeNotifier {
         .map((item) => jsonEncode(item.toJson()))
         .toList();
     await prefs.setStringList('favorites', favoritesJson);
+    unawaited(_syncFavoritesToNative());
+  }
+
+  /// Mirrors favorites into native storage so quick-settings tiles and
+  /// home-screen widgets can use them without the Flutter engine running.
+  Future<void> _syncFavoritesToNative() async {
+    final json = jsonEncode(
+      _favorites.map((item) => item.toJson()).toList(growable: false),
+    );
+    await _client.syncFavorites(json);
   }
 
   // ------------------------------------------------------------------- misc
