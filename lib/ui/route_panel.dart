@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/ui/location_picker_sheet.dart';
 import 'package:gps_mock/ui/onboarding_dialog.dart';
@@ -157,9 +158,9 @@ class _RoutePanelState extends State<RoutePanel> {
                 icon: const Icon(Icons.play_arrow),
                 label: const Text("START ROUTE"),
                 style: FilledButton.styleFrom(
-                  backgroundColor: Colors.green,
+                  backgroundColor: Colors.green.shade700,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  minimumSize: const Size(0, 48),
                 ),
               ),
             ),
@@ -200,6 +201,7 @@ class _RoutePanelState extends State<RoutePanel> {
   }
 
   Future<void> _startNavigation(BuildContext context) async {
+    HapticFeedback.mediumImpact();
     final appState = context.read<AppState>();
     final minutes = _durationMinutes;
     if (minutes == null) return;
@@ -270,13 +272,17 @@ class _RoutePanelState extends State<RoutePanel> {
         ),
         const SizedBox(height: 12),
         FilledButton.icon(
-          onPressed: () => appState.stopNavigation(),
+          onPressed: () {
+            HapticFeedback.mediumImpact();
+            appState.stopNavigation();
+          },
           icon: const Icon(Icons.stop),
           label: Text(status.arrived ? "FINISH" : "STOP ROUTE"),
           style: FilledButton.styleFrom(
-            backgroundColor: Colors.red,
+            backgroundColor: Colors.red.shade700,
             foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 32),
           ),
         ),
       ],
@@ -324,7 +330,7 @@ class _EndpointButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           child: Row(
             children: [
               Icon(icon, size: 18, color: iconColor),

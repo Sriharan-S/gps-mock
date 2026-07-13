@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/services/search_service.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 class PickedLocation {

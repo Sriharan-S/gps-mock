@@ -1,15 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart' show LatLngBounds;
 import 'package:geolocator/geolocator.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/services/mock_service_client.dart';
 import 'package:gps_mock/services/route_service.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -311,7 +311,7 @@ class AppState with ChangeNotifier {
       // Ignore stale responses if the endpoints changed mid-fetch.
       if (origin != _routeOrigin || destination != _routeDestination) return;
       _plannedRoute = route;
-      requestCameraBounds(_boundsFor(route.points));
+      requestCameraBounds(LatLngBounds.fromPoints(route.points));
     } on RouteException catch (e) {
       _routeError = e.message;
     } catch (_) {
@@ -377,21 +377,6 @@ class AppState with ChangeNotifier {
     _mockStatus = MockStatus.inactive;
     _activeRoutePoints = null;
     notifyListeners();
-  }
-
-  LatLngBounds _boundsFor(List<LatLng> points) {
-    var minLat = points.first.latitude, maxLat = points.first.latitude;
-    var minLng = points.first.longitude, maxLng = points.first.longitude;
-    for (final p in points) {
-      minLat = math.min(minLat, p.latitude);
-      maxLat = math.max(maxLat, p.latitude);
-      minLng = math.min(minLng, p.longitude);
-      maxLng = math.max(maxLng, p.longitude);
-    }
-    return LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
-    );
   }
 
   // -------------------------------------------------------- status polling

@@ -13,9 +13,11 @@ import android.location.provider.ProviderProperties
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import androidx.core.app.NotificationCompat
 import com.sriharan.gps_mock.tiles.BaseFavoriteTileService
 import com.sriharan.gps_mock.widgets.FavoriteWidgetProvider
@@ -26,6 +28,11 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.ln
+import kotlin.math.tan
 
 class MockingService : Service() {
     private var job: Job? = null
@@ -246,27 +253,82 @@ class MockingService : Service() {
         }
     }
 
-    /** Downloads a small static-map image centred on the mock position for
-     *  the navigation widget. Returns null when no API key is configured or
-     *  the network fails — the widget then shows text-only progress. */
+    /** Composes a small map image centred on the mock position for the
+     *  navigation widget by stitching OpenStreetMap tiles — completely free,
+     *  no API key. Returns null when the network fails; the widget then
+     *  shows text-only progress. */
     private fun fetchStaticMapBitmap(lat: Double, lng: Double): Bitmap? {
         return try {
-            val key = packageManager
-                .getApplicationInfo(packageName, PackageManager.GET_META_DATA)
-                .metaData?.getString("com.google.android.geo.API_KEY")
-            if (key.isNullOrEmpty() || key == "API_KEY_PLACEHOLDER") return null
-            val url = URL(
-                "https://maps.googleapis.com/maps/api/staticmap" +
-                    "?center=$lat,$lng&zoom=15&size=400x220" +
-                    "&markers=color:purple%7C$lat,$lng&key=$key"
-            )
-            val connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 8000
-            connection.readTimeout = 8000
-            connection.inputStream.use { BitmapFactory.decodeStream(it) }
+            val zoom = 15
+            val worldTiles = 1 shl zoom
+            val xTile = (lng + 180.0) / 360.0 * worldTiles
+            val latRad = Math.toRadians(lat)
+            val yTile = (1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * worldTiles
+
+            val width = 400
+            val height = 220
+            val left = xTile * TILE_SIZE - width / 2.0
+            val top = yTile * TILE_SIZE - height / 2.0
+
+            val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(output)
+            canvas.drawColor(Color.parseColor("#FF1E1E2E"))
+
+            var drewAny = false
+            for (tx in floor(left / TILE_SIZE).toInt()..floor((left + width - 1) / TILE_SIZE).toInt()) {
+                for (ty in floor(top / TILE_SIZE).toInt()..floor((top + height - 1) / TILE_SIZE).toInt()) {
+                    if (ty < 0 || ty >= worldTiles) continue
+                    val wrappedX = ((tx % worldTiles) + worldTiles) % worldTiles
+                    val tile = fetchOsmTile(zoom, wrappedX, ty) ?: continue
+                    drewAny = true
+                    canvas.drawBitmap(
+                        tile,
+                        (tx * TILE_SIZE - left).toFloat(),
+                        (ty * TILE_SIZE - top).toFloat(),
+                        null
+                    )
+                }
+            }
+            if (!drewAny) return null
+
+            // Marker dot at the mock position (the exact canvas centre).
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            paint.color = Color.parseColor("#FF6C63FF")
+            canvas.drawCircle(width / 2f, height / 2f, 10f, paint)
+            paint.color = Color.WHITE
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 3f
+            canvas.drawCircle(width / 2f, height / 2f, 10f, paint)
+            output
         } catch (e: Exception) {
             null
         }
+    }
+
+    /** Fetches one OSM tile, with a small in-memory cache — successive
+     *  widget refreshes mostly reuse the same tiles as the position moves. */
+    private fun fetchOsmTile(zoom: Int, x: Int, y: Int): Bitmap? {
+        val key = "$zoom/$x/$y"
+        synchronized(tileCache) { tileCache[key]?.let { return it } }
+        return try {
+            val url = URL("https://tile.openstreetmap.org/$zoom/$x/$y.png")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.setRequestProperty("User-Agent", OSM_USER_AGENT)
+            connection.connectTimeout = 8000
+            connection.readTimeout = 8000
+            val bitmap = connection.inputStream.use { BitmapFactory.decodeStream(it) }
+            if (bitmap != null) {
+                synchronized(tileCache) { tileCache[key] = bitmap }
+            }
+            bitmap
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private val tileCache = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>?): Boolean =
+            size > 12
     }
 
     private fun publishRouteStatus(
@@ -452,6 +514,10 @@ class MockingService : Service() {
         private const val PROVIDER = LocationManager.GPS_PROVIDER
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "mock_gps_channel"
+        private const val TILE_SIZE = 256
+        private const val OSM_USER_AGENT =
+            "gps-mock/2.0 (https://github.com/Sriharan-S/gps-mock; " +
+                "location testing tool for the My Globe navigation app)"
 
         @Volatile
         private var status: Map<String, Any?>? = null

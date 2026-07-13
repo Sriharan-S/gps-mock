@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/utils/constants.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 /// Bottom sheet listing saved locations. Pops with the chosen [LocationItem]
@@ -100,20 +102,11 @@ class _FavoriteCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Row(
         children: [
-          // Left thumbnail (1:1 ratio)
+          // Left thumbnail: a tiny non-interactive OSM map preview.
           SizedBox(
-            width: 108,
-            height: 108,
-            child: ColoredBox(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: Image.network(
-                AppConstants.getStaticMapUrl(item.latitude, item.longitude),
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Center(
-                  child: Icon(Icons.map, size: 30, color: Colors.grey),
-                ),
-              ),
-            ),
+            width: 110,
+            height: 116,
+            child: ExcludeSemantics(child: _MapThumbnail(item: item)),
           ),
           // Right content
           Expanded(
@@ -149,35 +142,30 @@ class _FavoriteCard extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: SizedBox(
-                          height: 40,
-                          child: FilledButton(
-                            onPressed: () {
-                              // The home screen moves the map to the result.
-                              Navigator.pop(context, item);
-                            },
-                            style: FilledButton.styleFrom(
-                              shape: const StadiumBorder(),
-                              padding: EdgeInsets.zero,
-                            ),
-                            child: const Text("Set"),
+                        child: FilledButton(
+                          onPressed: () {
+                            // The home screen moves the map to the result.
+                            Navigator.pop(context, item);
+                          },
+                          style: FilledButton.styleFrom(
+                            shape: const StadiumBorder(),
+                            minimumSize: const Size(0, 44),
+                            padding: EdgeInsets.zero,
                           ),
+                          child: const Text("Set"),
                         ),
                       ),
                       const SizedBox(width: 8),
-                      SizedBox(
-                        height: 40,
-                        width: 48,
-                        child: IconButton.outlined(
-                          tooltip: "Delete favorite",
-                          onPressed: () => _delete(context),
-                          icon: const Icon(Icons.delete_outline, size: 20),
-                          style: IconButton.styleFrom(
-                            foregroundColor: Theme.of(
-                              context,
-                            ).colorScheme.error,
-                          ),
+                      IconButton.outlined(
+                        tooltip: "Delete favorite",
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(44, 44),
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.error,
                         ),
+                        onPressed: () => _delete(context),
+                        icon: const Icon(Icons.delete_outline, size: 20),
                       ),
                     ],
                   ),
@@ -202,6 +190,51 @@ class _FavoriteCard extends StatelessWidget {
           label: "UNDO",
           onPressed: () => appState.insertFavorite(removedIndex, removedItem),
         ),
+      ),
+    );
+  }
+}
+
+/// Non-interactive OSM mini-map centred on the favorite — fully free, no
+/// API key, unlike the old Google Static Maps thumbnails.
+class _MapThumbnail extends StatelessWidget {
+  final LocationItem item;
+
+  const _MapThumbnail({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final point = LatLng(item.latitude, item.longitude);
+    return IgnorePointer(
+      child: FlutterMap(
+        options: MapOptions(
+          initialCenter: point,
+          initialZoom: 14,
+          interactionOptions: const InteractionOptions(
+            flags: InteractiveFlag.none,
+          ),
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: AppConstants.osmTileUrl,
+            userAgentPackageName: AppConstants.tileUserAgentPackage,
+          ),
+          MarkerLayer(
+            markers: [
+              Marker(
+                point: point,
+                width: 22,
+                height: 22,
+                alignment: Alignment.topCenter,
+                child: Icon(
+                  Icons.location_pin,
+                  size: 22,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

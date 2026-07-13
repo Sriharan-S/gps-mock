@@ -2,12 +2,14 @@
 
 A Flutter-based Android app for mocking/spoofing GPS locations on your device. Select any location on the map — or simulate an entire trip between two places — and your device will report that position to all other apps. 🗺️
 
+**100% free stack**: maps by OpenStreetMap, search by Photon, routing by OSRM — no API keys, no accounts, no credit card required for anything. Clone, build, run. 🆓
+
 > **🌐 Built for testing "My Globe"** — GPS Mock is the official testing companion for [My Globe](https://github.com/Sriharan-S), a maps & navigation project (think Google Maps, built from scratch). Simulating positions, movement, speed and bearing with GPS Mock makes it possible to develop and test My Globe's navigation features from a desk — no driving required. It works just as well for testing any other location-based app.
 
 ## ✨ Features
 
 ### Core
-- **🗺️ Interactive Map**: Pick your mock location by panning/zooming Google Maps — the app opens where you left off, or calibrated to your real position when mocking is off
+- **🗺️ Interactive Map**: Pick your mock location by panning/zooming the OpenStreetMap-based map (with automatic dark mode) — the app opens where you left off, or calibrated to your real position when mocking is off
 - **🔍 Smart Location Search**: Fast, typo-tolerant place search with named suggestions (powered by Photon/OpenStreetMap — no API key needed)
 - **⭐ Favorites**: Save frequently used locations; selecting one jumps the map straight to it. Delete with undo
 - **⚡ Real-time Mocking**: Start/stop GPS mocking with a single tap; survives closing the app (foreground service with a Stop action in the notification)
@@ -64,7 +66,8 @@ Download the latest APK from the [Releases](../../releases) page.
 - [Flutter SDK](https://docs.flutter.dev/get-started/install) (3.5.0 or higher)
 - [Android Studio](https://developer.android.com/studio) or [VS Code](https://code.visualstudio.com/) with Flutter extension
 - Android SDK
-- Google Maps API Key (only for the map view — search and routing are keyless)
+
+No API keys of any kind — the map, search, and routing all use free OpenStreetMap-based services.
 
 #### Setup
 
@@ -79,16 +82,12 @@ Download the latest APK from the [Releases](../../releases) page.
    flutter pub get
    ```
 
-3. Add your Google Maps API Key:
-   - In `android/app/src/main/AndroidManifest.xml`, replace `API_KEY_PLACEHOLDER` with your API key
-   - In `lib/utils/constants.dart`, replace `API_KEY_PLACEHOLDER` with your API key
-
-4. Run the app:
+3. Run the app:
    ```bash
    flutter run
    ```
 
-5. Build release APK:
+4. Build release APK:
    ```bash
    flutter build apk --release
    ```
@@ -173,8 +172,8 @@ This project is open source and available under the [MIT License](LICENSE).
 
 ## 🙏 Acknowledgments
 
-- Built with [Flutter](https://flutter.dev/)
-- Maps provided by [Google Maps Platform](https://developers.google.com/maps)
+- Built with [Flutter](https://flutter.dev/) and [flutter_map](https://pub.dev/packages/flutter_map)
+- Map tiles © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors
 - Place search by [Photon](https://photon.komoot.io/) (OpenStreetMap)
 - Routing by [OSRM](http://project-osrm.org/) (OpenStreetMap)
 - Geocoding by [geocoding](https://pub.dev/packages/geocoding) package

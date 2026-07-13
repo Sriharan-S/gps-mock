@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_animations/flutter_map_animations.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:geocoding/geocoding.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/services/search_service.dart';
@@ -11,9 +15,19 @@ import 'package:gps_mock/ui/favorites_sheet.dart';
 import 'package:gps_mock/ui/onboarding_dialog.dart';
 import 'package:gps_mock/ui/route_panel.dart';
 import 'package:gps_mock/ui/save_favorite_dialog.dart';
-import 'package:gps_mock/utils/map_styles.dart';
+import 'package:gps_mock/utils/constants.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+
+/// Color matrix that turns the standard OSM tiles into a dark map: inverted
+/// grayscale, so streets stay readable while the background goes dark.
+const List<double> _darkTileMatrix = <double>[
+  -0.2126, -0.7152, -0.0722, 0, 255, //
+  -0.2126, -0.7152, -0.0722, 0, 255, //
+  -0.2126, -0.7152, -0.0722, 0, 255, //
+  0, 0, 0, 1, 0, //
+];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,10 +36,16 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
-  final Completer<GoogleMapController> _controller = Completer();
+class _HomeScreenState extends State<HomeScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  late final AnimatedMapController _mapController = AnimatedMapController(
+    vsync: this,
+    duration: const Duration(milliseconds: 600),
+    curve: Curves.easeInOut,
+  );
   final SearchService _searchService = SearchService();
   final TextEditingController _searchController = TextEditingController();
+  Timer? _idleDebounce;
   int _handledCameraToken = 0;
   String _lastSearchQuery = '';
   bool _routeMode = false;
@@ -48,7 +68,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _idleDebounce?.cancel();
     _searchController.dispose();
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -60,25 +82,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _animateTo(CameraRequest request) async {
-    final controller = await _controller.future;
-    final bounds = request.bounds;
-    final target = request.target;
-    if (bounds != null) {
-      controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 60));
-    } else if (target != null) {
-      controller.animateCamera(CameraUpdate.newLatLngZoom(target, request.zoom));
-    }
-  }
+  // ----------------------------------------------------------- map camera
 
   /// Executes pending one-shot camera requests coming from the app state
   /// (startup calibration, search selection, favorites, my-location,
   /// route-fit).
   void _handleCameraRequest(AppState appState) {
     final request = appState.cameraRequest;
-    if (request != null && request.token != _handledCameraToken) {
-      _handledCameraToken = request.token;
-      _animateTo(request);
+    if (request == null || request.token == _handledCameraToken) return;
+    _handledCameraToken = request.token;
+    final bounds = request.bounds;
+    final target = request.target;
+    if (bounds != null) {
+      _mapController.animatedFitCamera(
+        cameraFit: CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(60),
+        ),
+      );
+    } else if (target != null) {
+      _mapController.animateTo(dest: target, zoom: request.zoom);
     }
   }
 
@@ -92,23 +115,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (position == _lastFollowedPosition) return;
     _lastFollowedPosition = position;
-    _controller.future.then(
-      (controller) =>
-          controller.animateCamera(CameraUpdate.newLatLng(position)),
-    );
+    _mapController.animateTo(dest: position);
   }
 
-  Future<void> _onCameraIdle() async {
+  /// Debounced "camera idle": reverse-geocodes the map center once panning
+  /// or zooming settles, mirroring the old behavior.
+  void _onPositionChanged(MapCamera camera, bool hasGesture) {
+    _idleDebounce?.cancel();
+    _idleDebounce = Timer(const Duration(milliseconds: 500), () {
+      _onCameraIdle(camera.center);
+    });
+  }
+
+  Future<void> _onCameraIdle(LatLng center) async {
+    if (!mounted) return;
     // While a route simulation runs the camera follows the moving marker —
     // don't treat that as the user picking a new pin location.
     if (context.read<AppState>().isNavigating) return;
-
-    final controller = await _controller.future;
-    final region = await controller.getVisibleRegion();
-    final center = LatLng(
-      (region.northeast.latitude + region.southwest.latitude) / 2,
-      (region.northeast.longitude + region.southwest.longitude) / 2,
-    );
 
     String? address;
     try {
@@ -133,68 +156,87 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
-  Set<Polyline> _buildPolylines(AppState appState) {
+  // ---------------------------------------------------------- map layers
+
+  List<Polyline> _buildPolylines(AppState appState) {
     final points = appState.routePolylinePoints;
     if (points == null || (!_routeMode && !appState.isNavigating)) {
-      return const {};
+      return const [];
     }
-    return {
+    return [
       Polyline(
-        polylineId: const PolylineId('route'),
         points: points,
-        width: 5,
+        strokeWidth: 5,
         color: Theme.of(context).colorScheme.primary,
       ),
-    };
+    ];
   }
 
-  Set<Marker> _buildMarkers(AppState appState) {
-    final markers = <Marker>{};
+  List<Marker> _buildMarkers(AppState appState) {
+    final markers = <Marker>[];
     if (_routeMode || appState.isNavigating) {
       final origin = appState.routeOrigin;
       if (origin != null) {
-        markers.add(
-          Marker(
-            markerId: const MarkerId('route_origin'),
-            position: origin,
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueGreen,
-            ),
-            infoWindow: InfoWindow(title: appState.routeOriginLabel),
-          ),
-        );
+        markers.add(_pinMarker(origin, Colors.green, "Route start"));
       }
       final destination = appState.routeDestination;
       if (destination != null) {
-        markers.add(
-          Marker(
-            markerId: const MarkerId('route_destination'),
-            position: destination,
-            icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueRed,
-            ),
-            infoWindow: InfoWindow(title: appState.routeDestinationLabel),
-          ),
-        );
+        markers.add(_pinMarker(destination, Colors.red, "Route destination"));
       }
     }
     if (appState.isNavigating) {
       final status = appState.mockStatus;
       markers.add(
         Marker(
-          markerId: const MarkerId('mock_position'),
-          position: LatLng(status.latitude, status.longitude),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueAzure,
+          point: LatLng(status.latitude, status.longitude),
+          width: 36,
+          height: 36,
+          child: Semantics(
+            label: "Simulated position",
+            child: Transform.rotate(
+              angle: status.bearing * math.pi / 180,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black45, blurRadius: 6),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.navigation,
+                  size: 22,
+                  color: Colors.white,
+                ),
+              ),
+            ),
           ),
-          rotation: status.bearing,
-          flat: true,
-          anchor: const Offset(0.5, 0.5),
         ),
       );
     }
     return markers;
   }
+
+  Marker _pinMarker(LatLng point, Color color, String label) {
+    return Marker(
+      point: point,
+      width: 36,
+      height: 36,
+      alignment: Alignment.topCenter,
+      child: Semantics(
+        label: label,
+        child: Icon(
+          Icons.location_pin,
+          size: 36,
+          color: color,
+          shadows: const [Shadow(color: Colors.black45, blurRadius: 6)],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- build
 
   @override
   Widget build(BuildContext context) {
@@ -202,6 +244,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     _handleCameraRequest(appState);
     _handleFollowRoute(appState);
+
+    Widget tileLayer = TileLayer(
+      urlTemplate: AppConstants.osmTileUrl,
+      userAgentPackageName: AppConstants.tileUserAgentPackage,
+    );
+    if (isDark) {
+      tileLayer = ColorFiltered(
+        colorFilter: const ColorFilter.matrix(_darkTileMatrix),
+        child: tileLayer,
+      );
+    }
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -212,101 +265,47 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            mapType: MapType.normal,
-            style: isDark ? MapStyles.dark : null,
-            initialCameraPosition: CameraPosition(
-              target: appState.mapStartLocation,
-              zoom: appState.mapStartZoom,
-            ),
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (GoogleMapController controller) {
-              if (!_controller.isCompleted) _controller.complete(controller);
-            },
-            onCameraIdle: _onCameraIdle,
-            polylines: _buildPolylines(appState),
-            markers: _buildMarkers(appState),
-          ),
-          if (!appState.isNavigating)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 30),
-                child: Semantics(
-                  label: "Selected mock location pin",
-                  child: Icon(
-                    Icons.location_on,
-                    size: 50,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
+          FlutterMap(
+            mapController: _mapController.mapController,
+            options: MapOptions(
+              initialCenter: appState.mapStartLocation,
+              initialZoom: appState.mapStartZoom,
+              minZoom: 2,
+              maxZoom: 19,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
+              onPositionChanged: _onPositionChanged,
+              onMapReady: () {
+                _onCameraIdle(_mapController.mapController.camera.center);
+              },
             ),
-          if (appState.isMockLocationApp == false) _buildSetupBanner(context),
+            children: [
+              tileLayer,
+              PolylineLayer(polylines: _buildPolylines(appState)),
+              MarkerLayer(markers: _buildMarkers(appState)),
+            ],
+          ),
+          if (!appState.isNavigating) _buildCenterPin(context),
+          _buildTopOverlays(context, appState),
           _buildControlsOverlay(context, appState),
         ],
       ),
     );
   }
 
-  Widget _buildFollowButton(BuildContext context) {
-    return FloatingActionButton.small(
-      heroTag: "follow_route",
-      tooltip: _followRoute
-          ? "Stop following mock position"
-          : "Follow mock position",
-      backgroundColor: _followRoute
-          ? Theme.of(context).colorScheme.primaryContainer
-          : null,
-      onPressed: () => setState(() {
-        _followRoute = !_followRoute;
-        _lastFollowedPosition = null;
-      }),
-      child: const Icon(Icons.navigation),
-    );
-  }
-
-  Widget _buildSetupBanner(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Positioned(
-      top: MediaQuery.of(context).padding.top + kToolbarHeight + 12,
-      left: 20,
-      right: 20,
-      child: Material(
-        color: colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => showDialog(
-            context: context,
-            builder: (_) => const OnboardingDialog(),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.warning_amber_rounded,
-                  color: colorScheme.onErrorContainer,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    "Not set as mock location app — tap to fix",
-                    style: TextStyle(
-                      color: colorScheme.onErrorContainer,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right,
-                  color: colorScheme.onErrorContainer,
-                  size: 20,
-                ),
-              ],
+  Widget _buildCenterPin(BuildContext context) {
+    return IgnorePointer(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 46),
+          child: Semantics(
+            label: "Selected mock location pin",
+            child: Icon(
+              Icons.location_pin,
+              size: 50,
+              color: Theme.of(context).colorScheme.primary,
+              shadows: const [Shadow(color: Colors.black38, blurRadius: 8)],
             ),
           ),
         ),
@@ -314,30 +313,108 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMyLocationButton(BuildContext context) {
-    return FloatingActionButton.small(
-      heroTag: "my_location",
-      tooltip: "Go to my real location",
-      onPressed: () async {
-        final moved = await context.read<AppState>().moveToRealLocation();
-        if (!moved && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                "Couldn't get your location. Check that location is "
-                "enabled and permission is granted.",
-              ),
-            ),
-          );
-        }
-      },
-      child: const Icon(Icons.my_location),
+  /// Setup warning banner and live "mocking" badge, stacked under the
+  /// search bar.
+  Widget _buildTopOverlays(BuildContext context, AppState appState) {
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + kToolbarHeight + 12,
+      left: 20,
+      right: 20,
+      child: Column(
+        children: [
+          if (appState.isMockLocationApp == false) ...[
+            _buildSetupBanner(context),
+            const SizedBox(height: 8),
+          ],
+          if (appState.isMocking) _buildMockingBadge(context, appState),
+        ],
+      ),
     );
   }
 
+  Widget _buildMockingBadge(BuildContext context, AppState appState) {
+    final navigating = appState.isNavigating;
+    return Semantics(
+      liveRegion: true,
+      label: navigating ? "Route simulation active" : "Location mocking active",
+      child: Material(
+        color: Colors.green.shade700,
+        borderRadius: BorderRadius.circular(20),
+        elevation: 2,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                navigating ? Icons.route : Icons.gps_fixed,
+                size: 14,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                navigating ? "SIMULATING ROUTE" : "MOCKING",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSetupBanner(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.errorContainer,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => showDialog(
+          context: context,
+          builder: (_) => const OnboardingDialog(),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: colorScheme.onErrorContainer,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "Not set as mock location app — tap to fix",
+                  style: TextStyle(
+                    color: colorScheme.onErrorContainer,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: colorScheme.onErrorContainer,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------ search bar
+
   Widget _buildSearchBar(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.only(left: 16),
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor.withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(30),
@@ -354,11 +431,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   controller: controller,
                   focusNode: focusNode,
                   textInputAction: TextInputAction.search,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: "Search places…",
                     border: InputBorder.none,
-                    icon: Icon(Icons.search),
+                    icon: const Icon(Icons.search),
+                    suffixIcon: controller.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: "Clear search",
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              controller.clear();
+                              setState(() {});
+                            },
+                          ),
                   ),
+                  onChanged: (_) => setState(() {}),
                 );
               },
               suggestionsCallback: (pattern) async {
@@ -429,13 +517,65 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
           IconButton(
             tooltip: "Saved locations",
-            icon: const Icon(Icons.list),
+            icon: const Icon(Icons.bookmarks_outlined),
             onPressed: () => _openFavorites(context),
+          ),
+          PopupMenuButton<String>(
+            tooltip: "More options",
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              switch (value) {
+                case 'settings':
+                  context.read<AppState>().openSettings();
+                case 'about':
+                  _showAbout(context);
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'settings',
+                child: ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.developer_mode),
+                  title: Text("Developer settings"),
+                ),
+              ),
+              PopupMenuItem(
+                value: 'about',
+                child: ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.info_outline),
+                  title: Text("About GPS Mock"),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  void _showAbout(BuildContext context) {
+    showAboutDialog(
+      context: context,
+      applicationName: "GPS Mock",
+      applicationVersion: "2.0.0",
+      applicationIcon: const Icon(Icons.location_pin, size: 40),
+      children: const [
+        Text(
+          "GPS Mock spoofs your device's location and simulates trips "
+          "along real roads. It is the testing companion for My Globe, "
+          "a maps & navigation project.\n\n"
+          "Maps © OpenStreetMap contributors. Search by Photon, "
+          "routing by OSRM — all free, keyless services.",
+        ),
+      ],
+    );
+  }
+
+  // ------------------------------------------------------------- actions
 
   Future<void> _openFavorites(BuildContext context) async {
     final selected = await showModalBottomSheet<LocationItem>(
@@ -452,6 +592,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _toggleMocking(BuildContext context) async {
+    HapticFeedback.mediumImpact();
     final appState = context.read<AppState>();
     final result = await appState.toggleMocking();
     if (!context.mounted) return;
@@ -472,9 +613,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         );
       case MockToggleResult.started:
+        _announce(context, "Location mocking started");
       case MockToggleResult.stopped:
-        break; // The button state itself shows the change.
+        _announce(context, "Location mocking stopped");
     }
+  }
+
+  /// Screen-reader announcement for state changes that have no focusable
+  /// widget of their own.
+  void _announce(BuildContext context, String message) {
+    SemanticsService.sendAnnouncement(
+      View.of(context),
+      message,
+      TextDirection.ltr,
+    );
+  }
+
+  void _copyCoordinates(BuildContext context, LatLng location) {
+    final text =
+        "${location.latitude.toStringAsFixed(6)}, "
+        "${location.longitude.toStringAsFixed(6)}";
+    Clipboard.setData(ClipboardData(text: text));
+    HapticFeedback.selectionClick();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Copied $text")),
+    );
   }
 
   void _shareLocation(AppState appState) {
@@ -484,22 +647,78 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ShareParams(
         text:
             "${appState.currentAddress}\n"
-            "https://maps.google.com/?q=${loc.latitude},${loc.longitude}",
+            "${loc.latitude.toStringAsFixed(6)}, ${loc.longitude.toStringAsFixed(6)}\n"
+            "https://www.openstreetmap.org/?mlat=${loc.latitude}&mlon=${loc.longitude}#map=16/${loc.latitude}/${loc.longitude}",
         subject: "Location from GPS Mock",
       ),
+    );
+  }
+
+  // ------------------------------------------------------- bottom overlay
+
+  Widget _buildFollowButton(BuildContext context) {
+    return FloatingActionButton.small(
+      heroTag: "follow_route",
+      tooltip: _followRoute
+          ? "Stop following mock position"
+          : "Follow mock position",
+      backgroundColor: _followRoute
+          ? Theme.of(context).colorScheme.primaryContainer
+          : null,
+      onPressed: () => setState(() {
+        _followRoute = !_followRoute;
+        _lastFollowedPosition = null;
+      }),
+      child: const Icon(Icons.navigation),
+    );
+  }
+
+  Widget _buildMyLocationButton(BuildContext context) {
+    return FloatingActionButton.small(
+      heroTag: "my_location",
+      tooltip: "Go to my real location",
+      onPressed: () async {
+        final moved = await context.read<AppState>().moveToRealLocation();
+        if (!moved && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                "Couldn't get your location. Check that location is "
+                "enabled and permission is granted.",
+              ),
+            ),
+          );
+        }
+      },
+      child: const Icon(Icons.my_location),
     );
   }
 
   Widget _buildControlsOverlay(BuildContext context, AppState appState) {
     final showRoutePanel = _routeMode || appState.isNavigating;
     return Positioned(
-      bottom: 40,
-      left: 20,
-      right: 20,
+      bottom: 24,
+      left: 16,
+      right: 16,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          // OpenStreetMap requires visible attribution on the map screen.
+          Padding(
+            padding: const EdgeInsets.only(right: 4, bottom: 4),
+            child: Text(
+              AppConstants.osmAttribution,
+              style: TextStyle(
+                fontSize: 10,
+                color: Theme.of(context).colorScheme.onSurface.withValues(
+                  alpha: 0.75,
+                ),
+                backgroundColor: Theme.of(context).colorScheme.surface
+                    .withValues(alpha: 0.6),
+              ),
+            ),
+          ),
           // Anchored above the card so they never overlap it, whatever the
           // card's current height.
           Row(
@@ -525,55 +744,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     bool showRoutePanel,
   ) {
     return Card(
-        elevation: 8,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.95),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(
-                    value: false,
-                    label: Text("Fixed"),
-                    icon: Icon(Icons.location_on, size: 16),
-                  ),
-                  ButtonSegment(
-                    value: true,
-                    label: Text("Route"),
-                    icon: Icon(Icons.route, size: 16),
-                  ),
-                ],
-                selected: {showRoutePanel},
-                showSelectedIcon: false,
-                style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                  value: false,
+                  label: Text("Fixed"),
+                  icon: Icon(Icons.location_on, size: 16),
                 ),
-                onSelectionChanged: appState.isNavigating
-                    ? null // locked to Route while a simulation runs
-                    : (selection) {
-                        setState(() => _routeMode = selection.first);
-                        // Sensible default: start the trip from wherever
-                        // the pin currently is.
-                        final state = context.read<AppState>();
-                        if (_routeMode &&
-                            state.routeOrigin == null &&
-                            state.currentLocation != null) {
-                          state.setRouteOrigin(
-                            state.currentLocation!,
-                            state.currentAddress,
-                          );
-                        }
-                      },
-              ),
-              const SizedBox(height: 12),
-              if (showRoutePanel)
-                const RoutePanel()
-              else
-                _buildFixedControls(context, appState),
-            ],
+                ButtonSegment(
+                  value: true,
+                  label: Text("Route"),
+                  icon: Icon(Icons.route, size: 16),
+                ),
+              ],
+              selected: {showRoutePanel},
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              onSelectionChanged: appState.isNavigating
+                  ? null // locked to Route while a simulation runs
+                  : (selection) {
+                      setState(() => _routeMode = selection.first);
+                      // Sensible default: start the trip from wherever
+                      // the pin currently is.
+                      final state = context.read<AppState>();
+                      if (_routeMode &&
+                          state.routeOrigin == null &&
+                          state.currentLocation != null) {
+                        state.setRouteOrigin(
+                          state.currentLocation!,
+                          state.currentAddress,
+                        );
+                      }
+                    },
+            ),
+            const SizedBox(height: 12),
+            if (showRoutePanel)
+              const RoutePanel()
+            else
+              _buildFixedControls(context, appState),
+          ],
         ),
       ),
     );
@@ -591,20 +808,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        const SizedBox(height: 8),
-        Text(
-          location == null
-              ? "—"
-              : "${location.latitude.toStringAsFixed(5)}, "
-                    "${location.longitude.toStringAsFixed(5)}",
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 6),
+        if (location != null)
+          Tooltip(
+            message: "Copy coordinates",
+            child: ActionChip(
+              avatar: const Icon(Icons.copy, size: 14),
+              label: Text(
+                "${location.latitude.toStringAsFixed(5)}, "
+                "${location.longitude.toStringAsFixed(5)}",
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _copyCoordinates(context, location),
+            ),
+          )
+        else
+          Text("—", style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 12),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            IconButton(
+            IconButton.filledTonal(
               tooltip: "Save as favorite",
+              iconSize: 22,
+              style: IconButton.styleFrom(
+                minimumSize: const Size(48, 48),
+              ),
               icon: const Icon(Icons.favorite_border),
               onPressed: location == null
                   ? null
@@ -613,23 +842,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       builder: (_) => const SaveFavoriteDialog(),
                     ),
             ),
-            FilledButton.icon(
-              onPressed: () => _toggleMocking(context),
-              icon: Icon(appState.isMocking ? Icons.stop : Icons.play_arrow),
-              label: Text(appState.isMocking ? "STOP" : "START"),
-              style: FilledButton.styleFrom(
-                backgroundColor: appState.isMocking
-                    ? Colors.red
-                    : Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 12,
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: () => _toggleMocking(context),
+                icon: Icon(appState.isMocking ? Icons.stop : Icons.play_arrow),
+                label: Text(
+                  appState.isMocking ? "STOP MOCKING" : "START MOCKING",
+                ),
+                style: FilledButton.styleFrom(
+                  backgroundColor: appState.isMocking
+                      ? Colors.red.shade700
+                      : Colors.green.shade700,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(0, 48),
                 ),
               ),
             ),
-            IconButton(
+            const SizedBox(width: 10),
+            IconButton.filledTonal(
               tooltip: "Share location",
+              iconSize: 22,
+              style: IconButton.styleFrom(
+                minimumSize: const Size(48, 48),
+              ),
               icon: const Icon(Icons.share),
               onPressed: location == null
                   ? null
