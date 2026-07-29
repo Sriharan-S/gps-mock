@@ -53,12 +53,10 @@ abstract class BaseFavoriteTileService : TileService() {
     }
 
     private fun toggle(favoriteId: String) {
-        // Prefer talking to the service directly: the quick-settings shade
-        // stays open so the user can watch the tile flip. Only fall back to
-        // the (shade-collapsing) trampoline when the platform refuses.
-        if (MockController.toggleFavoriteDirect(this, favoriteId)) {
-            return
-        }
+        // A location foreground service cannot reliably be started while the
+        // app is backgrounded on Android 12+ (and Android 14 enforces this
+        // before our service can enter the foreground). Always use the tiny
+        // foreground trampoline so tile taps work from a cold process too.
         toggleViaTrampoline(favoriteId)
     }
 

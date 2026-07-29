@@ -25,10 +25,12 @@ class MapStyle {
     MapStyle(
       id: MapStyleId.standard,
       name: "Standard",
-      description: "Classic OpenStreetMap look",
-      urlTemplate: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      attribution: "© OpenStreetMap contributors",
-      maxZoom: 19,
+      description: "Clean, familiar streets and labels",
+      urlTemplate:
+          "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+      subdomains: ["a", "b", "c", "d"],
+      attribution: "© OpenStreetMap contributors · © CARTO",
+      maxZoom: 20,
     ),
     MapStyle(
       id: MapStyleId.humanitarian,
@@ -60,10 +62,11 @@ class MapStyle {
     MapStyle(
       id: MapStyleId.dark,
       name: "Dark",
-      description: "Night-friendly dark basemap",
-      urlTemplate: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+      description: "Google-like night streets with clear labels",
+      urlTemplate:
+          "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
       subdomains: ["a", "b", "c", "d"],
-      attribution: "© OpenStreetMap · © CARTO",
+      attribution: "© OpenStreetMap contributors · © CARTO",
       maxZoom: 20,
     ),
   ];
