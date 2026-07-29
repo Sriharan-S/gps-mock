@@ -1,6 +1,7 @@
 package com.sriharan.gps_mock
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 
 /**
@@ -10,17 +11,38 @@ import android.os.Bundle
  * transparent activity makes the start reliable everywhere.
  */
 class MockControlActivity : Activity() {
+    private var handled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        when (intent?.action) {
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        if (handled) return
+        handled = true
+
+        // Wait until this activity is genuinely in the foreground before
+        // starting the location FGS. Doing this from onCreate races Android's
+        // background-start checks and caused cold quick-tile launches to die.
+        val started = when (intent?.action) {
             ACTION_TOGGLE_FAVORITE ->
                 intent.getStringExtra(EXTRA_FAVORITE_ID)?.let {
                     MockController.toggleFavoriteDirect(this, it)
-                }
+                } ?: false
             ACTION_STOP_MOCK -> MockController.stopDirect(this)
+            else -> false
         }
-        finish()
+
+        if (!started) {
+            // Keep the failure recoverable: open the normal app so the user can
+            // grant/setup the required mock-location permission.
+            startActivity(
+                Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        window.decorView.postDelayed({ finish() }, 250)
     }
 
     companion object {

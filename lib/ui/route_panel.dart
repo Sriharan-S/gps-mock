@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/ui/location_picker_sheet.dart';
 import 'package:gps_mock/ui/onboarding_dialog.dart';
+import 'package:gps_mock/ui/widgets/m3_segmented_control.dart';
 import 'package:provider/provider.dart';
 
 /// How the mock trip duration is specified.
@@ -60,9 +61,8 @@ class _RoutePanelState extends State<RoutePanel> {
     // Prefill the duration with OSRM's realistic estimate once per route.
     if (route != null && identityHashCode(route) != _prefilledForRoute) {
       _prefilledForRoute = identityHashCode(route);
-      _durationController.text = math
-          .max(1, (route.osrmDurationSeconds / 60).ceil())
-          .toString();
+      _durationController.text =
+          math.max(1, (route.osrmDurationSeconds / 60).ceil()).toString();
     }
 
     return Column(
@@ -73,9 +73,8 @@ class _RoutePanelState extends State<RoutePanel> {
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
-            onPressed: appState.routeOrigin == null
-                ? null
-                : () => _addStop(context),
+            onPressed:
+                appState.routeOrigin == null ? null : () => _addStop(context),
             icon: const Icon(Icons.add_location_alt_outlined, size: 18),
             label: const Text("Add stop"),
           ),
@@ -174,7 +173,8 @@ class _RoutePanelState extends State<RoutePanel> {
                       ? "Stop ${i + 1}"
                       : appState.routeStops[i].label,
                   isPlaceholder: false,
-                  onTap: () => _pickEndpoint(context, target: _Target.stop, stopIndex: i),
+                  onTap: () => _pickEndpoint(context,
+                      target: _Target.stop, stopIndex: i),
                   onRemove: () => appState.removeRouteStop(i),
                 ),
               ],
@@ -186,7 +186,8 @@ class _RoutePanelState extends State<RoutePanel> {
                     ? "Choose destination"
                     : appState.routeDestinationLabel,
                 isPlaceholder: appState.routeDestinationLabel.isEmpty,
-                onTap: () => _pickEndpoint(context, target: _Target.destination),
+                onTap: () =>
+                    _pickEndpoint(context, target: _Target.destination),
               ),
             ],
           ),
@@ -196,8 +197,8 @@ class _RoutePanelState extends State<RoutePanel> {
           icon: const Icon(Icons.swap_vert),
           onPressed:
               appState.routeOrigin != null || appState.routeDestination != null
-              ? appState.swapRouteEndpoints
-              : null,
+                  ? appState.swapRouteEndpoints
+                  : null,
         ),
       ],
     );
@@ -205,25 +206,24 @@ class _RoutePanelState extends State<RoutePanel> {
 
   Widget _buildDurationInput(BuildContext context, route) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        SegmentedButton<_DurationMode>(
-          segments: const [
-            ButtonSegment(
+        M3SegmentedControl<_DurationMode>(
+          options: const [
+            M3Segment(
               value: _DurationMode.minutes,
-              label: Text("Duration"),
-              icon: Icon(Icons.timer_outlined, size: 16),
+              label: "Duration",
+              icon: Icons.timer_outlined,
             ),
-            ButtonSegment(
+            M3Segment(
               value: _DurationMode.arriveBy,
-              label: Text("Arrive by"),
-              icon: Icon(Icons.schedule, size: 16),
+              label: "Arrive by",
+              icon: Icons.schedule,
             ),
           ],
-          selected: {_mode},
-          showSelectedIcon: false,
-          style: const ButtonStyle(visualDensity: VisualDensity.compact),
-          onSelectionChanged: (s) => setState(() => _mode = s.first),
+          selected: _mode,
+          compact: true,
+          onSelected: (mode) => setState(() => _mode = mode),
         ),
         const SizedBox(height: 12),
         if (_mode == _DurationMode.minutes)
@@ -408,7 +408,7 @@ class _RoutePanelState extends State<RoutePanel> {
           status.arrived
               ? "Arrived — holding final position"
               : "${_formatDuration(status.remainingSeconds)} remaining · "
-                    "$kmh km/h",
+                  "$kmh km/h",
           style: Theme.of(context).textTheme.bodyMedium,
         ),
         const SizedBox(height: 12),
@@ -436,9 +436,8 @@ class _RoutePanelState extends State<RoutePanel> {
 
   static String _formatArrival(DateTime time) {
     final now = DateTime.now();
-    final isToday = time.year == now.year &&
-        time.month == now.month &&
-        time.day == now.day;
+    final isToday =
+        time.year == now.year && time.month == now.month && time.day == now.day;
     final clock =
         "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}";
     return isToday ? clock : "${time.day}/${time.month} $clock";

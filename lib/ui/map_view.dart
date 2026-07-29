@@ -16,6 +16,7 @@ import 'package:gps_mock/ui/onboarding_dialog.dart';
 import 'package:gps_mock/ui/permissions_sheet.dart';
 import 'package:gps_mock/ui/route_panel.dart';
 import 'package:gps_mock/ui/save_favorite_dialog.dart';
+import 'package:gps_mock/ui/widgets/m3_segmented_control.dart';
 import 'package:gps_mock/utils/constants.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
@@ -46,6 +47,10 @@ class MapViewState extends State<MapView>
   bool _followRoute = true;
   LatLng? _lastFollowedPosition;
   double _rotation = 0;
+  final DraggableScrollableController _sheetController =
+      DraggableScrollableController();
+  double _sheetExtent = .34;
+  final NetworkTileProvider _tileProvider = NetworkTileProvider();
 
   @override
   void initState() {
@@ -64,6 +69,7 @@ class MapViewState extends State<MapView>
     _idleDebounce?.cancel();
     _searchController.dispose();
     _mapController.dispose();
+    _sheetController.dispose();
     super.dispose();
   }
 
@@ -128,6 +134,7 @@ class MapViewState extends State<MapView>
     if (camera.rotation != _rotation) {
       setState(() => _rotation = camera.rotation);
     }
+    if (!hasGesture) return;
     _idleDebounce?.cancel();
     _idleDebounce = Timer(const Duration(milliseconds: 500), () {
       _onCameraIdle(camera.center);
@@ -292,15 +299,6 @@ class MapViewState extends State<MapView>
         toolbarHeight: 68,
         title: _buildSearchBar(context),
       ),
-      floatingActionButton: appState.isNavigating || appState.routeMode
-          ? null
-          : FloatingActionButton.extended(
-              heroTag: "directions",
-              onPressed: () => _openDirections(context),
-              icon: const Icon(Icons.directions),
-              label: const Text("Directions"),
-            ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
       body: Stack(
         children: [
           FlutterMap(
@@ -322,7 +320,7 @@ class MapViewState extends State<MapView>
                 subdomains: style.subdomains,
                 maxNativeZoom: style.maxZoom,
                 userAgentPackageName: AppConstants.tileUserAgentPackage,
-                tileProvider: NetworkTileProvider(),
+                tileProvider: _tileProvider,
               ),
               PolylineLayer(polylines: _buildPolylines(appState)),
               MarkerLayer(markers: _buildFavoriteMarkers(appState, zoom)),
@@ -506,29 +504,8 @@ class MapViewState extends State<MapView>
             onPressed: () => MapStyleSheet.show(context),
             child: const Icon(Icons.layers_outlined),
           ),
-          const SizedBox(height: 8),
-          _MapButton(
-            tooltip: "Zoom in",
-            onPressed: () => _zoomBy(1),
-            child: const Icon(Icons.add),
-          ),
-          const SizedBox(height: 8),
-          _MapButton(
-            tooltip: "Zoom out",
-            onPressed: () => _zoomBy(-1),
-            child: const Icon(Icons.remove),
-          ),
         ],
       ),
-    );
-  }
-
-  void _zoomBy(double delta) {
-    if (!_mapReady) return;
-    final camera = _mapController.mapController.camera;
-    _mapController.animateTo(
-      dest: camera.center,
-      zoom: (camera.zoom + delta).clamp(2, 19),
     );
   }
 
@@ -716,10 +693,6 @@ class MapViewState extends State<MapView>
 
   // ------------------------------------------------------- bottom panel
 
-  Future<void> _openDirections(BuildContext context) async {
-    context.read<AppState>().setRouteMode(true);
-  }
-
   Future<void> _toggleMocking(BuildContext context) async {
     HapticFeedback.mediumImpact();
     final appState = context.read<AppState>();
@@ -749,12 +722,12 @@ class MapViewState extends State<MapView>
   }
 
   void _announce(String message) {
-    SemanticsService.sendAnnouncement(View.of(context), message, TextDirection.ltr);
+    SemanticsService.sendAnnouncement(
+        View.of(context), message, TextDirection.ltr);
   }
 
   void _copyCoordinates(BuildContext context, LatLng location) {
-    final text =
-        "${location.latitude.toStringAsFixed(6)}, "
+    final text = "${location.latitude.toStringAsFixed(6)}, "
         "${location.longitude.toStringAsFixed(6)}";
     Clipboard.setData(ClipboardData(text: text));
     HapticFeedback.selectionClick();
@@ -768,8 +741,7 @@ class MapViewState extends State<MapView>
     if (loc == null) return;
     SharePlus.instance.share(
       ShareParams(
-        text:
-            "${appState.currentAddress}\n"
+        text: "${appState.currentAddress}\n"
             "${loc.latitude.toStringAsFixed(6)}, ${loc.longitude.toStringAsFixed(6)}\n"
             "https://www.openstreetmap.org/?mlat=${loc.latitude}&mlon=${loc.longitude}#map=16/${loc.latitude}/${loc.longitude}",
         subject: "Location from GPS Mock",
@@ -779,76 +751,107 @@ class MapViewState extends State<MapView>
 
   Widget _buildBottomPanel(BuildContext context, AppState appState) {
     final showRoutePanel = appState.routeMode || appState.isNavigating;
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12, bottom: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (appState.isNavigating) ...[
-                  _buildFollowButton(context),
-                  const SizedBox(width: 8),
-                ],
-                _MapButton(
-                  tooltip: "Go to my real location",
-                  onPressed: () => _goToMyLocation(context),
-                  child: const Icon(Icons.my_location),
-                ),
-              ],
-            ),
-          ),
-          // Full-width docked control bar.
-          Material(
+    final defaultExtent = showRoutePanel ? .58 : .34;
+    const minExtent = .055;
+    const maxExtent = .94;
+    return NotificationListener<DraggableScrollableNotification>(
+      onNotification: (notification) {
+        if ((_sheetExtent - notification.extent).abs() > .01) {
+          setState(() => _sheetExtent = notification.extent);
+        }
+        return false;
+      },
+      child: DraggableScrollableSheet(
+        controller: _sheetController,
+        initialChildSize: defaultExtent,
+        minChildSize: minExtent,
+        maxChildSize: maxExtent,
+        snap: true,
+        snapSizes: [minExtent, defaultExtent, maxExtent],
+        snapAnimationDuration: const Duration(milliseconds: 240),
+        builder: (context, scrollController) {
+          return Material(
             elevation: 12,
             color: Theme.of(context).colorScheme.surface,
+            clipBehavior: Clip.antiAlias,
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(
-                          value: false,
-                          label: Text("Fixed"),
-                          icon: Icon(Icons.location_on, size: 16),
+            child: CustomScrollView(
+              controller: scrollController,
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant
+                              .withValues(alpha: .4),
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                        ButtonSegment(
-                          value: true,
-                          label: Text("Route"),
-                          icon: Icon(Icons.route, size: 16),
-                        ),
-                      ],
-                      selected: {showRoutePanel},
-                      showSelectedIcon: false,
-                      onSelectionChanged: appState.isNavigating
-                          ? null
-                          : (selection) =>
-                                appState.setRouteMode(selection.first),
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    if (showRoutePanel)
-                      const RoutePanel()
-                    else
-                      _buildFixedControls(context, appState),
-                  ],
+                  ),
                 ),
-              ),
+                if (_sheetExtent > minExtent + .025)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 2, 16, 12),
+                    sliver: SliverToBoxAdapter(
+                      child: SafeArea(
+                        top: false,
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                if (appState.isNavigating)
+                                  _buildFollowButton(context),
+                                const Spacer(),
+                                _MapButton(
+                                  tooltip: "Go to my real location",
+                                  onPressed: () => _goToMyLocation(context),
+                                  child: const Icon(Icons.my_location),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            M3SegmentedControl<bool>(
+                              options: const [
+                                M3Segment(
+                                  value: false,
+                                  label: "Fixed",
+                                  icon: Icons.location_on,
+                                ),
+                                M3Segment(
+                                  value: true,
+                                  label: "Route",
+                                  icon: Icons.route,
+                                ),
+                              ],
+                              selected: showRoutePanel,
+                              onSelected: appState.isNavigating
+                                  ? null
+                                  : appState.setRouteMode,
+                            ),
+                            const SizedBox(height: 12),
+                            if (showRoutePanel)
+                              const RoutePanel()
+                            else
+                              _buildFixedControls(context, appState),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -921,9 +924,9 @@ class MapViewState extends State<MapView>
               onPressed: location == null
                   ? null
                   : () => showDialog(
-                      context: context,
-                      builder: (_) => const SaveFavoriteDialog(),
-                    ),
+                        context: context,
+                        builder: (_) => const SaveFavoriteDialog(),
+                      ),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -948,9 +951,8 @@ class MapViewState extends State<MapView>
               iconSize: 22,
               style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
               icon: const Icon(Icons.share),
-              onPressed: location == null
-                  ? null
-                  : () => _shareLocation(appState),
+              onPressed:
+                  location == null ? null : () => _shareLocation(appState),
             ),
           ],
         ),
