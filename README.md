@@ -31,7 +31,7 @@ Simulate actually *travelling* a route — perfect for testing turn-by-turn navi
 
 The simulation runs natively in the foreground service, so it keeps driving even if you close the app. Reopen anytime to see live progress, remaining time, and a camera-follow mode.
 
-**📥 Import a GPX track or coordinate list** — instead of picking two points, tap **Import** in the Route panel and paste either the contents of a **GPX file** (`.gpx` tracks, routes or waypoints) or a plain **list of coordinates** (one `latitude, longitude` per line). GPS Mock draws the exact geometry on the map and simulates driving it — no routing service involved, so it follows your track precisely. If the GPX carries timestamps, the recorded trip duration is used as the default pace.
+**📥 Import a GPX track or coordinate list** — instead of picking two points, tap **Import** in the Route panel and either **choose a file** (`.gpx` or `.txt`) or paste the contents of a **GPX file** (tracks, routes or waypoints) or a plain **list of coordinates** (one `latitude, longitude` per line). GPS Mock draws the exact geometry on the map and simulates driving it — no routing service involved, so it follows your track precisely. If the GPX carries timestamps, the recorded trip duration is used as the default pace.
 
 ### 📟 Quick Settings Tiles
 Add up to **4 tiles** (one per saved favorite) to your notification shade. Toggle a tile to instantly mock that location **without opening the app** — turning one on automatically turns the others off.
@@ -123,7 +123,7 @@ If Android ever refuses the mock (e.g. GPS Mock got deselected as the mock locat
 
 #### Importing a route (GPX / coordinates)
 1. Switch the bottom panel to **Route** and tap **Import**
-2. Paste a **GPX** document (track, route or waypoints) or a **coordinate list** — one `latitude, longitude` per line (extra columns like elevation are ignored, `#`/`//` lines are treated as comments)
+2. **Choose a file** (`.gpx`/`.txt`) or paste a **GPX** document (track, route or waypoints) or a **coordinate list** — one `latitude, longitude` per line (extra columns like elevation are ignored, `#`/`//` lines are treated as comments)
 3. The route appears on the map with its distance and a suggested duration; adjust the duration or **arrive by** time as usual
 4. **▶️ START ROUTE** simulates driving the imported path exactly — great for replaying a recorded trip or a route exported from another tool
 
