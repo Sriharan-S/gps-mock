@@ -41,15 +41,14 @@ dependencies:
   flutter_typeahead: ^5.2.0
   http: ^1.6.0
   geolocator: ^14.0.3
-  # Kept < 13.1.0 so it shares win32 ^5.x with file_picker; share_plus 13.1.0+
-  # requires win32 ^6.0.1, which file_picker (<=11.x) cannot compile against.
-  # The SharePlus.instance / ShareParams API used here exists throughout 13.x.
-  share_plus: ">=13.0.0 <13.1.0"
+  share_plus: ^13.2.0
   path_provider: ^2.1.6
   flutter_map: ^8.3.1
   latlong2: ^0.9.1
   flutter_map_animations: ^0.10.0
-  file_picker: ^11.0.0
+  # Flutter-team file picker; its Windows impl is native (no Dart win32
+  # dependency), so it doesn't clash with share_plus's win32 ^6 requirement.
+  file_selector: ^1.0.0
 
 dev_dependencies:
   flutter_test:

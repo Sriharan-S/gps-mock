@@ -1,6 +1,4 @@
-import 'dart:convert';
-
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gps_mock/providers/app_state.dart';
@@ -45,26 +43,13 @@ class _ImportRouteDialogState extends State<ImportRouteDialog> {
       _error = null;
     });
     try {
-      final result = await FilePicker.platform.pickFiles(
-        // Some Android providers don't report a GPX MIME type, so accept any
-        // file and validate its contents instead of filtering by extension.
-        type: FileType.any,
-        withData: true,
-      );
-      if (result == null || result.files.isEmpty) return; // cancelled
-      final file = result.files.single;
+      // Accept any file and validate its contents — Android's picker filters
+      // by MIME type, which isn't reliably set for .gpx files.
+      final XFile? file = await openFile();
+      if (file == null) return; // cancelled
 
-      String? content;
-      if (file.bytes != null) {
-        content = utf8.decode(file.bytes!, allowMalformed: true);
-      } else if (file.readStream != null) {
-        final chunks = <int>[];
-        await for (final chunk in file.readStream!) {
-          chunks.addAll(chunk);
-        }
-        content = utf8.decode(chunks, allowMalformed: true);
-      }
-      if (content == null || content.trim().isEmpty) {
+      final content = await file.readAsString();
+      if (content.trim().isEmpty) {
         setState(() => _error = "Could not read the selected file.");
         return;
       }
