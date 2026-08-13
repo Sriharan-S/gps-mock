@@ -10,6 +10,7 @@ import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/models/map_style.dart';
 import 'package:gps_mock/models/mock_history_entry.dart';
 import 'package:gps_mock/services/mock_service_client.dart';
+import 'package:gps_mock/services/route_import_service.dart';
 import 'package:gps_mock/services/route_service.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
@@ -369,6 +370,55 @@ class AppState with ChangeNotifier {
   }
 
   void retryRouteFetch() => unawaited(_fetchPlannedRoute());
+
+  /// Average driving speed assumed when an imported route carries no timing
+  /// information — only used to prefill a sensible default trip duration,
+  /// which the user can always override.
+  static const double _importedDefaultKmh = 50;
+
+  /// Builds a planned route straight from imported GPX/coordinate [content]
+  /// (bypassing the OSRM router) so it can be simulated like any other
+  /// route. Returns null on success, or an error message describing why the
+  /// import failed. [sourceName] is an optional fallback name (e.g. a file
+  /// name) shown as the route label.
+  String? importRoute(String content, {String? sourceName}) {
+    try {
+      final imported = RouteImportService.parse(content, sourceName: sourceName);
+      final recorded = imported.recordedDurationSeconds;
+      final duration = (recorded != null && recorded > 0)
+          ? recorded
+          : _estimatedSeconds(imported.distanceMeters);
+
+      _routeStops.clear();
+      _routeOrigin = imported.points.first;
+      _routeDestination = imported.points.last;
+      final label = (imported.name != null && imported.name!.trim().isNotEmpty)
+          ? imported.name!.trim()
+          : 'Imported route';
+      _routeOriginLabel = '$label · start';
+      _routeDestinationLabel = '$label · end';
+      _plannedRoute = RouteResult(
+        points: imported.points,
+        distanceMeters: imported.distanceMeters,
+        osrmDurationSeconds: duration,
+      );
+      _routeError = null;
+      _fetchingRoute = false;
+      _routeMode = true;
+      notifyListeners();
+      requestCameraBounds(LatLngBounds.fromPoints(imported.points));
+      return null;
+    } on RouteImportException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Could not import this route.';
+    }
+  }
+
+  static double _estimatedSeconds(double meters) {
+    final seconds = (meters / 1000) / _importedDefaultKmh * 3600;
+    return seconds < 60 ? 60 : seconds;
+  }
 
   List<LatLng> get _plannedWaypoints => [
     if (_routeOrigin != null) _routeOrigin!,

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/models/mock_history_entry.dart';
+import 'package:gps_mock/services/route_import_service.dart';
 import 'package:gps_mock/services/route_service.dart';
 import 'package:gps_mock/services/search_service.dart';
 
@@ -49,6 +50,112 @@ void main() {
       expect(
         () => RouteService.parseOsrmResponse(body),
         throwsA(isA<RouteException>()),
+      );
+    });
+  });
+
+  group('RouteImportService', () {
+    test('parses a GPX track and sums the distance', () {
+      const gpx = '''
+      <?xml version="1.0" encoding="UTF-8"?>
+      <gpx version="1.1" creator="test">
+        <metadata><name>Morning ride</name></metadata>
+        <trk>
+          <trkseg>
+            <trkpt lat="48.2082" lon="16.3738"></trkpt>
+            <trkpt lat="48.2100" lon="16.3800"></trkpt>
+            <trkpt lat="48.2150" lon="16.3900"></trkpt>
+          </trkseg>
+        </trk>
+      </gpx>
+      ''';
+
+      final route = RouteImportService.parse(gpx, sourceName: 'ride.gpx');
+
+      expect(route.points, hasLength(3));
+      expect(route.points.first.latitude, 48.2082);
+      expect(route.points.first.longitude, 16.3738);
+      expect(route.points.last.latitude, 48.2150);
+      expect(route.distanceMeters, greaterThan(0));
+      // GPX <name> wins over the file name.
+      expect(route.name, 'Morning ride');
+      expect(route.recordedDurationSeconds, isNull);
+    });
+
+    test('derives a recorded duration from GPX timestamps', () {
+      const gpx = '''
+      <gpx>
+        <trk><trkseg>
+          <trkpt lat="10.0" lon="20.0"><time>2023-05-01T10:00:00Z</time></trkpt>
+          <trkpt lat="10.1" lon="20.1"><time>2023-05-01T10:10:00Z</time></trkpt>
+        </trkseg></trk>
+      </gpx>
+      ''';
+
+      final route = RouteImportService.parse(gpx);
+
+      expect(route.points, hasLength(2));
+      expect(route.recordedDurationSeconds, 600); // 10 minutes
+    });
+
+    test('falls back to route points when there is no track', () {
+      const gpx = '''
+      <gpx>
+        <rte>
+          <rtept lat="1.0" lon="2.0"/>
+          <rtept lat="3.0" lon="4.0"/>
+        </rte>
+      </gpx>
+      ''';
+
+      final route = RouteImportService.parse(gpx);
+      expect(route.points, hasLength(2));
+      expect(route.points.first.latitude, 1.0);
+    });
+
+    test('parses a plain coordinate list (lat, lon per line)', () {
+      const text = '''
+      # a couple of points
+      48.2082, 16.3738
+      48.2100 16.3800
+      48.2150,16.3900,320
+      ''';
+
+      final route = RouteImportService.parse(text, sourceName: 'points.txt');
+
+      expect(route.points, hasLength(3));
+      expect(route.points[1].latitude, 48.2100);
+      expect(route.points[1].longitude, 16.3800);
+      // Extra elevation column is ignored.
+      expect(route.points[2].longitude, 16.3900);
+      expect(route.name, 'points');
+    });
+
+    test('throws when fewer than two points are provided', () {
+      expect(
+        () => RouteImportService.parse('48.2, 16.3'),
+        throwsA(isA<RouteImportException>()),
+      );
+    });
+
+    test('throws on out-of-range coordinates', () {
+      expect(
+        () => RouteImportService.parse('91.0, 16.3\n10.0, 20.0'),
+        throwsA(isA<RouteImportException>()),
+      );
+    });
+
+    test('throws on unparseable coordinate lines', () {
+      expect(
+        () => RouteImportService.parse('hello world\n10.0, 20.0'),
+        throwsA(isA<RouteImportException>()),
+      );
+    });
+
+    test('throws on empty content', () {
+      expect(
+        () => RouteImportService.parse('   '),
+        throwsA(isA<RouteImportException>()),
       );
     });
   });

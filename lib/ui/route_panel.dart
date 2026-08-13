@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gps_mock/providers/app_state.dart';
+import 'package:gps_mock/ui/import_route_dialog.dart';
 import 'package:gps_mock/ui/location_picker_sheet.dart';
 import 'package:gps_mock/ui/onboarding_dialog.dart';
 import 'package:gps_mock/ui/widgets/m3_segmented_control.dart';
@@ -70,14 +71,21 @@ class _RoutePanelState extends State<RoutePanel> {
       children: [
         _buildWaypoints(context, appState),
         const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed:
-                appState.routeOrigin == null ? null : () => _addStop(context),
-            icon: const Icon(Icons.add_location_alt_outlined, size: 18),
-            label: const Text("Add stop"),
-          ),
+        Row(
+          children: [
+            TextButton.icon(
+              onPressed:
+                  appState.routeOrigin == null ? null : () => _addStop(context),
+              icon: const Icon(Icons.add_location_alt_outlined, size: 18),
+              label: const Text("Add stop"),
+            ),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: () => _importRoute(context),
+              icon: const Icon(Icons.upload_file_outlined, size: 18),
+              label: const Text("Import"),
+            ),
+          ],
         ),
         if (appState.fetchingRoute)
           const Padding(
@@ -307,6 +315,19 @@ class _RoutePanelState extends State<RoutePanel> {
     final picked = await LocationPickerSheet.show(context, "Add a stop");
     if (picked == null || !context.mounted) return;
     context.read<AppState>().addRouteStop(picked.location, picked.label);
+  }
+
+  Future<void> _importRoute(BuildContext context) async {
+    // A freshly imported route resets the duration prefill state so the
+    // planner re-seeds it from the imported route's pace.
+    final imported = await ImportRouteDialog.show(context);
+    if (imported && context.mounted) {
+      setState(() {
+        _prefilledForRoute = null;
+        _arriveBy = null;
+        _mode = _DurationMode.minutes;
+      });
+    }
   }
 
   Future<void> _pickArrivalTime() async {
