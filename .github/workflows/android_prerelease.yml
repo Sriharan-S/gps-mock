@@ -42,6 +42,10 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          # Pinned to match the project's Gradle 8.12 / AGP 8.9.1 toolchain.
+          # Floating `stable` currently resolves to Flutter 3.47+, whose Gradle
+          # plugin demands Gradle >= 8.14.0 and fails this project's build.
+          flutter-version: '3.32.0'
           channel: 'stable'
           cache: true
 
