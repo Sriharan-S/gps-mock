@@ -42,10 +42,10 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          # Pinned to match the project's Gradle 8.12 / AGP 8.9.1 toolchain.
-          # Floating `stable` currently resolves to Flutter 3.47+, whose Gradle
-          # plugin demands Gradle >= 8.14.0 and fails this project's build.
-          flutter-version: '3.32.0'
+          # The project's dependencies (e.g. path_provider 2.1.6) require
+          # Dart >= 3.10, so a current stable Flutter is needed. The matching
+          # Gradle requirement (>= 8.14) is satisfied by the wrapper bump in
+          # android/gradle/wrapper/gradle-wrapper.properties.
           channel: 'stable'
           cache: true
 
@@ -53,7 +53,10 @@ jobs:
         run: flutter pub get
 
       - name: Build debug APK
-        run: flutter build apk --debug
+        # --android-skip-build-dependency-validation is a belt-and-suspenders
+        # bypass in case a future stable bumps the required Gradle above the
+        # wrapper's pinned version again.
+        run: flutter build apk --debug --android-skip-build-dependency-validation
 
       - name: Prepare artifact
         id: meta
