@@ -1,0 +1,87 @@
+name: Android Prerelease (feature branches)
+
+# Builds an installable APK for every branch other than main/dev and
+# publishes it as a GitHub prerelease (one per branch, updated on each push).
+# Uses a debug build so it needs no signing keystore/secrets — the APK is
+# debug-signed and can be sideloaded for local testing.
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - dev
+    paths:
+      - 'lib/**'
+      - 'android/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/android_prerelease.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # One in-flight build per branch; newer pushes cancel older runs.
+  group: android-prerelease-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Prepare artifact
+        id: meta
+        run: |
+          SAFE_BRANCH="${GITHUB_REF_NAME//\//-}"
+          APK="GPS-Mock-${SAFE_BRANCH}-debug.apk"
+          mv build/app/outputs/flutter-apk/app-debug.apk "build/app/outputs/flutter-apk/${APK}"
+          echo "safe_branch=${SAFE_BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "apk_path=build/app/outputs/flutter-apk/${APK}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GPS-Mock-${{ steps.meta.outputs.safe_branch }}-debug
+          path: ${{ steps.meta.outputs.apk_path }}
+          if-no-files-found: error
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: prerelease-${{ steps.meta.outputs.safe_branch }}
+          name: "Prerelease: ${{ github.ref_name }}"
+          prerelease: true
+          body: |
+            Automated **debug** build for branch `${{ github.ref_name }}`
+            (commit `${{ steps.meta.outputs.short_sha }}`).
+
+            ⚠️ Debug-signed test build for local testing only. Install by
+            sideloading or with `adb install -r <apk>`. If a release/Play
+            build is already installed, uninstall it first (different
+            signature).
+          files: ${{ steps.meta.outputs.apk_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
