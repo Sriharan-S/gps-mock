@@ -18,6 +18,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.drawable.Icon
 import androidx.core.app.NotificationCompat
 import com.sriharan.gps_mock.tiles.BaseFavoriteTileService
 import com.sriharan.gps_mock.widgets.FavoriteWidgetProvider
@@ -92,6 +93,7 @@ class MockingService : Service() {
                 put("fromLabel", intent.getStringExtra(EXTRA_FROM_LABEL) ?: "")
                 put("toLabel", intent.getStringExtra(EXTRA_TO_LABEL) ?: "")
                 put("distanceMeters", intent.getDoubleExtra(EXTRA_DISTANCE_METERS, 0.0))
+                put("stops", JSONArray(intent.getStringExtra(EXTRA_STOPS_JSON) ?: "[]"))
             }
         }
         if (!intent.hasExtra(EXTRA_LAT) || !intent.hasExtra(EXTRA_LNG)) return null
@@ -150,6 +152,95 @@ class MockingService : Service() {
             ?.notify(NOTIFICATION_ID, buildNotification(text, title))
     }
 
+    private fun updateRouteNotification(
+        command: JSONObject,
+        progress: Double,
+        remainingSeconds: Int,
+        arrived: Boolean,
+    ) {
+        if (Build.VERSION.SDK_INT < 36) {
+            val text = if (arrived) {
+                "${command.optString("label")} · arrived, holding position"
+            } else {
+                "${command.optString("label")} · ${formatRemaining(remainingSeconds)} left"
+            }
+            updateNotification(text, if (arrived) "Mock route finished" else "Mock route active")
+            return
+        }
+
+        val stops = command.optJSONArray("stops") ?: JSONArray()
+        val boundaries = mutableListOf(0)
+        for (i in 0 until stops.length()) {
+            boundaries += (stops.getJSONObject(i).optDouble("progress") * 1000)
+                .toInt().coerceIn(1, 999)
+        }
+        boundaries += 1000
+        val segments = boundaries.distinct().sorted().zipWithNext { start, end ->
+            Notification.ProgressStyle.Segment(end - start).setColor(
+                if (end <= progress * 1000) Color.rgb(76, 175, 80)
+                else Color.rgb(103, 80, 164)
+            )
+        }
+        val points = (0 until stops.length()).map { index ->
+            Notification.ProgressStyle.Point(
+                (stops.getJSONObject(index).optDouble("progress") * 1000)
+                    .toInt().coerceIn(1, 999)
+            ).setColor(Color.rgb(255, 193, 7))
+        }
+        val style = Notification.ProgressStyle()
+            .setStyledByProgress(false)
+            .setProgress((progress * 1000).toInt().coerceIn(0, 1000))
+            .setProgressTrackerIcon(
+                Icon.createWithResource(this, android.R.drawable.ic_menu_mylocation)
+            )
+            .setProgressSegments(segments)
+            .setProgressPoints(points)
+
+        val openAppIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val stopIntent = PendingIntent.getService(
+            this, 1,
+            Intent(this, MockingService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val nextStop = (0 until stops.length())
+            .map { stops.getJSONObject(it) }
+            .firstOrNull { it.optDouble("progress") > progress }
+            ?.optString("label")
+        val text = when {
+            arrived -> "Arrived · holding final position"
+            nextStop != null -> "${formatRemaining(remainingSeconds)} left · next: $nextStop"
+            else -> "${formatRemaining(remainingSeconds)} left"
+        }
+        val notification = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle(command.optString("label", "Mock route active"))
+            .setContentText(text)
+            .setSubText("Route simulation")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openAppIntent)
+            .setStyle(style)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(
+                        this,
+                        android.R.drawable.ic_menu_close_clear_cancel
+                    ),
+                    "Stop",
+                    stopIntent,
+                ).build()
+            )
+            .build()
+        getSystemService(NotificationManager::class.java)
+            ?.notify(NOTIFICATION_ID, notification)
+    }
+
     // ------------------------------------------------------------ fixed mode
 
     private fun startFixedMocking(command: JSONObject) {
@@ -170,7 +261,9 @@ class MockingService : Service() {
             "progress" to 0.0,
             "remainingSeconds" to 0,
             "bearing" to 0.0,
+            "speedMps" to 0.0,
             "arrived" to false,
+            "arrivedFromRoute" to command.optBoolean("arrivedFromRoute", false),
         )
 
         job?.cancel()
@@ -180,7 +273,7 @@ class MockingService : Service() {
 
             while (isActive) {
                 pushMockLocation(locationManager, lat, lng, bearing = 0f, speedMps = 0f)
-                delay(1000)
+                delay(PUSH_INTERVAL_MS)
             }
         }
     }
@@ -231,48 +324,85 @@ class MockingService : Service() {
             val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
             installTestProvider(locationManager)
 
-            var tick = 0
-            var arrivalRecorded = false
+            // Fixes are pushed far more often than the UI is refreshed, so
+            // each consumer-visible cadence is gated on wall-clock time.
+            var lastStatusAt = 0L
+            var lastNotificationAt = 0L
+            var lastWidgetAt = 0L
             while (isActive) {
-                val elapsed = (System.currentTimeMillis() - startedAtMillis) / 1000.0
+                val nowMillis = System.currentTimeMillis()
+                val elapsed = (nowMillis - startedAtMillis) / 1000.0
                 val fraction = (elapsed / durationSeconds).coerceIn(0.0, 1.0)
-                val arrived = fraction >= 1.0
-                if (arrived && !arrivalRecorded) {
-                    arrivalRecorded = true
-                    MockStateStore.recordArrived(this@MockingService)
-                }
                 val (position, bearing) = positionAlongRoute(
                     points, cumulative, totalDistance * fraction
                 )
-                val speed = if (arrived) 0f else cruiseSpeed
-                pushMockLocation(locationManager, position[0], position[1], bearing, speed)
 
-                val remaining = (durationSeconds - elapsed).coerceAtLeast(0.0).toInt()
-                publishRouteStatus(
-                    position, label, fraction, remaining, bearing, speed, arrived, routeFile
-                )
-
-                if (arrived) {
-                    if (tick % 60 == 0) {
-                        updateNotification("$label · arrived, holding position", "Mock route finished")
-                    }
-                } else if (tick % 5 == 0) {
-                    updateNotification(
-                        "$label · ${formatRemaining(remaining)} left", "Mock route active"
-                    )
+                if (fraction >= 1.0) {
+                    // The trip is over. Rather than idling in route mode, hand
+                    // the destination over to a plain fixed mock so the device
+                    // simply stays parked there.
+                    MockStateStore.recordArrived(this@MockingService)
+                    handOffToDestination(command, points.last())
+                    return@launch
                 }
 
+                pushMockLocation(
+                    locationManager, position[0], position[1], bearing, cruiseSpeed
+                )
+
+                val remaining = (durationSeconds - elapsed).coerceAtLeast(0.0).toInt()
+                if (nowMillis - lastStatusAt >= 1000) {
+                    lastStatusAt = nowMillis
+                    publishRouteStatus(
+                        position, label, fraction, remaining, bearing,
+                        cruiseSpeed, false, routeFile
+                    )
+                }
+                if (nowMillis - lastNotificationAt >= 5000) {
+                    lastNotificationAt = nowMillis
+                    updateRouteNotification(command, fraction, remaining, false)
+                }
                 // Keep the navigation home-screen widget fresh (progress +
                 // map snapshot) roughly every 15 seconds while running.
-                if (tick % 15 == 0 && NavigationWidgetProvider.hasWidgets(this@MockingService)) {
+                if (nowMillis - lastWidgetAt >= 15000 &&
+                    NavigationWidgetProvider.hasWidgets(this@MockingService)
+                ) {
+                    lastWidgetAt = nowMillis
                     val snapshot = fetchStaticMapBitmap(position[0], position[1])
                     NavigationWidgetProvider.push(this@MockingService, statusMap(), snapshot)
                 }
 
-                tick++
-                delay(1000)
+                delay(PUSH_INTERVAL_MS)
             }
         }
+    }
+
+    /** Converts a finished route into a fixed mock parked on its destination:
+     *  the route session is closed in history, a fixed one opens, and the
+     *  service keeps holding the final position until the user stops it. */
+    private fun handOffToDestination(routeCommand: JSONObject, destination: DoubleArray) {
+        val label = routeCommand.optString("toLabel").ifEmpty {
+            routeCommand.optString("label").ifEmpty { "Destination" }
+        }
+        val fixedCommand = JSONObject().apply {
+            put("mode", MODE_FIXED)
+            put("lat", destination[0])
+            put("lng", destination[1])
+            put("label", label)
+            put("favoriteId", "")
+            put("arrivedFromRoute", true)
+        }
+
+        // recordStart closes the open route entry and opens the fixed one.
+        MockStateStore.recordStart(this, fixedCommand)
+        MockStateStore.setActiveCommand(this, fixedCommand)
+
+        startFixedMocking(fixedCommand)
+
+        updateNotification("Arrived · holding $label", "Mock location active")
+        NavigationWidgetProvider.pushIdle(this)
+        BaseFavoriteTileService.refreshAll(this)
+        FavoriteWidgetProvider.refreshAll(this)
     }
 
     /** Composes a small map image centred on the mock position for the
@@ -448,26 +578,32 @@ class MockingService : Service() {
     // ------------------------------------------------------------- providers
 
     private fun installTestProvider(locationManager: LocationManager) {
-        try {
-            locationManager.addTestProvider(
-                PROVIDER,
-                false, // requiresNetwork
-                false, // requiresSatellite
-                false, // requiresCell
-                false, // hasMonetaryCost
-                true,  // supportsAltitude
-                true,  // supportsSpeed
-                true,  // supportsBearing
-                ProviderProperties.POWER_USAGE_LOW,
-                ProviderProperties.ACCURACY_FINE
-            )
-        } catch (e: Exception) {
-            // Provider might already exist or not allowed
-        }
-        try {
-            locationManager.setTestProviderEnabled(PROVIDER, true)
-        } catch (e: Exception) {
-            // Ignore
+        // Mock every provider a consumer might read. Mocking GPS alone leaves
+        // the network provider (and therefore the fused provider that most
+        // apps actually use) reporting the device's real position, which
+        // surfaces as the real location flashing through mid-simulation.
+        for (provider in PROVIDERS) {
+            try {
+                locationManager.addTestProvider(
+                    provider,
+                    false, // requiresNetwork
+                    false, // requiresSatellite
+                    false, // requiresCell
+                    false, // hasMonetaryCost
+                    true,  // supportsAltitude
+                    true,  // supportsSpeed
+                    true,  // supportsBearing
+                    ProviderProperties.POWER_USAGE_LOW,
+                    ProviderProperties.ACCURACY_FINE
+                )
+            } catch (e: Exception) {
+                // Provider might already exist, or the OS may not allow it.
+            }
+            try {
+                locationManager.setTestProviderEnabled(provider, true)
+            } catch (e: Exception) {
+                // Ignore — pushes to this provider will simply be skipped.
+            }
         }
     }
 
@@ -478,31 +614,38 @@ class MockingService : Service() {
         bearing: Float,
         speedMps: Float,
     ) {
-        val mockLocation = Location(PROVIDER).apply {
-            latitude = lat
-            longitude = lng
-            altitude = 10.0
-            time = System.currentTimeMillis()
-            speed = speedMps
-            this.bearing = bearing
-            accuracy = 1.0f
-            elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                bearingAccuracyDegrees = 0.1f
-                verticalAccuracyMeters = 0.1f
-                speedAccuracyMetersPerSecond = 0.1f
+        var pushedAny = false
+        var refused = false
+        for (provider in PROVIDERS) {
+            val mockLocation = Location(provider).apply {
+                latitude = lat
+                longitude = lng
+                altitude = 10.0
+                time = System.currentTimeMillis()
+                speed = speedMps
+                this.bearing = bearing
+                accuracy = 1.0f
+                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    bearingAccuracyDegrees = 0.1f
+                    verticalAccuracyMeters = 0.1f
+                    speedAccuracyMetersPerSecond = 0.1f
+                }
+            }
+            try {
+                locationManager.setTestProviderLocation(provider, mockLocation)
+                pushedAny = true
+            } catch (e: SecurityException) {
+                // Android refused the mock push — almost always because the
+                // app is not (or no longer) selected as the mock location app.
+                refused = true
+            } catch (e: Exception) {
+                // Transient failure, or this device has no such provider.
             }
         }
-        try {
-            locationManager.setTestProviderLocation(PROVIDER, mockLocation)
-        } catch (e: SecurityException) {
-            // Android refused the mock push — almost always because the app
-            // is not (or no longer) selected as the mock location app. Tell
-            // the user immediately instead of pretending to mock.
-            onMockPushRejected()
-        } catch (e: Exception) {
-            // Transient failure — keep trying.
-        }
+        // Only warn when nothing at all got through: a device that lacks the
+        // network provider is not a misconfiguration.
+        if (!pushedAny && refused) onMockPushRejected()
     }
 
     /** Heads-up alert so a rejected mock never fails silently. */
@@ -567,9 +710,11 @@ class MockingService : Service() {
         job?.cancel()
         status = null
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        try {
-            locationManager.removeTestProvider(PROVIDER)
-        } catch (e: Exception) {}
+        for (provider in PROVIDERS) {
+            try {
+                locationManager.removeTestProvider(provider)
+            } catch (e: Exception) {}
+        }
     }
 
     companion object {
@@ -585,9 +730,20 @@ class MockingService : Service() {
         const val EXTRA_FROM_LABEL = "FROM_LABEL"
         const val EXTRA_TO_LABEL = "TO_LABEL"
         const val EXTRA_DISTANCE_METERS = "DISTANCE_METERS"
+        const val EXTRA_STOPS_JSON = "STOPS_JSON"
         const val MODE_FIXED = "fixed"
         const val MODE_ROUTE = "route"
-        private const val PROVIDER = LocationManager.GPS_PROVIDER
+        /** Every provider the service mocks. Consumers read location through
+         *  the fused provider, which blends GPS and network — so both must be
+         *  held at the mock position or the real one bleeds through. */
+        private val PROVIDERS = listOf(
+            LocationManager.GPS_PROVIDER,
+            LocationManager.NETWORK_PROVIDER,
+        )
+
+        /** How often mock fixes are pushed. Faster than 1 Hz so a real fix is
+         *  never the most recent one a consumer sees between our updates. */
+        private const val PUSH_INTERVAL_MS = 200L
         private const val NOTIFICATION_ID = 1
         private const val ALERT_NOTIFICATION_ID = 2
         private const val CHANNEL_ID = "mock_gps_channel"

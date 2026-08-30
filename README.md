@@ -9,12 +9,15 @@ A Flutter-based Android app for mocking/spoofing GPS locations on your device. S
 ## ✨ Features
 
 ### Core
-- **🧭 Three-tab layout**: a persistent **Map**, a **Saved** locations list, and a **History** log — all from a bottom navigation bar
+- **🧭 Three-tab layout**: a persistent **Map**, a **Library** (saved locations above, mock history below), and **Settings** — all from a bottom navigation bar
 - **🗺️ Interactive Map**: Pick your mock location by panning/zooming the map — opens where you left off, or calibrated to your real position when mocking is off
-- **🎨 Switchable map styles**: Standard, Humanitarian, Topographic, Satellite and Dark basemaps — all free and keyless
-- **🧭 Compass**: rotate the map with two fingers; tap the compass to snap back to north
-- **📌 Saved locations on the map**: favorites show as dots when zoomed out and as named pins when you zoom in
-- **🔍 Smart Location Search**: Fast, typo-tolerant place search with named suggestions (powered by Photon/OpenStreetMap — no API key needed)
+- **🎨 Switchable map styles**: Auto (follows the app theme), Streets, Minimal, Dark and Satellite — all free and keyless vector/raster basemaps
+- **🧭 Compass**: rotate the map with two fingers; a compass button appears while rotated — tap it to snap back to north
+- **🏙️ 3D buildings**: extrude the basemap's buildings and tilt the camera with one tap
+- **📌 Saved locations on the map**: favorites show as dots you can tap to select
+- **📍 Draggable pin**: drag the pin itself, tap anywhere to send it there, or long-press — and when the map is panned away from it, an edge marker points back with the distance
+- **📥 Offline maps**: download a city, district, state or country (or a saved location's surroundings, or a route you simulated) and its tiles stay on the device. Downloads are listed as a country → state → district → city tree and can be deleted at any level
+- **🔍 Smart Location Search**: A Material 3 search bar that expands in place — fast, typo-tolerant place search (powered by Photon/OpenStreetMap — no API key needed), plus **paste-in coordinates** (`12.9716, 77.5946`) and **recent searches**
 - **⭐ Favorites**: Save frequently used locations; selecting one jumps the map straight to it. Delete with undo
 - **🕑 History**: Every mock session is logged — fixed spots and routes (from → to, distance, planned vs. actual duration, when started/arrived/ended) — including sessions started from tiles and widgets
 - **⚡ Real-time Mocking**: Start/stop GPS mocking with a single tap; survives closing the app (foreground service with a Stop action in the notification)
@@ -23,11 +26,12 @@ A Flutter-based Android app for mocking/spoofing GPS locations on your device. S
 ### 🧭 Mock Navigation Movement
 Simulate actually *travelling* a route — perfect for testing turn-by-turn navigation in My Globe:
 
-1. Tap the **Directions** button (or switch the bottom panel to **Route**)
-2. Pick a start and destination (search, favorites, or the map pin) — e.g. **Chennai → Salem** — and add **stops** in between if you like
+1. Tap **Directions** in the bottom panel (or switch it to **Route**)
+2. Pick a start and destination — **tap a waypoint to place it by tapping the map, or tap it again to search** (the search also offers "choose on the map" and the current pin) — e.g. **Chennai → Salem** — and add **stops** in between if you like. The start is a **green pin**, stops are **numbered blue pins**, the destination is a **red pin**, and each can be dragged on the map
 3. GPS Mock fetches the real driving route (free [OSRM](http://project-osrm.org/) routing, no key needed) and shows it on the map with distance and a realistic duration
 4. Choose how long the trip should take — either a **duration** in minutes, or an **"arrive by"** time/date (GPS Mock works out the pace)
 5. **START ROUTE**: your device's GPS now moves along the actual roads with correct **speed and bearing**, arriving exactly on schedule
+6. On arrival GPS Mock **hands the destination over to a fixed-spot mock**, so the device simply stays parked there until you stop it
 
 The simulation runs natively in the foreground service, so it keeps driving even if you close the app. Reopen anytime to see live progress, remaining time, and a camera-follow mode.
 
@@ -38,12 +42,25 @@ Add up to **4 tiles** (one per saved favorite) to your notification shade. Toggl
 - **Favorite toggle widget**: bind a widget to any saved location and toggle mocking right from your home screen
 - **Route status widget**: shows the running mock route's remaining time, progress bar, and a periodically refreshed map snapshot of the simulated position
 
+### ⬆️ In-app updates
+GPS Mock checks its own GitHub releases once per launch and offers whatever is newer:
+
+- **Update / Later** prompt on open, with **"Don't remind me again today"** to keep it quiet until tomorrow
+- Downloads the release APK with live progress and hands it to the Android installer (you still confirm the install; the app asks for the "install unknown apps" permission the first time)
+- Releases with no APK attached fall back to opening the release page
+- **Settings → Updates** has a manual check and a link to the release notes
+
+> **Note on tags:** version comparison is numeric when a release is tagged like `v2.3.0`. This repo currently tags by date (`v2026-07-29-19`), which can't be compared against the app's `versionName`, so the updater instead offers a release whenever the newest tag differs from the last one this install saw — seeded silently on first run so it never nags about a build you may already have. Switching to semver tags turns on the exact comparison.
+
 ### 🎨 Quality of life
-- Material Design 3 with automatic **light/dark theme** (including a dark basemap)
+- Material Design 3 throughout, with a **light / dark / follow-system** theme switch in the overflow menu (the map follows it too)
+- **Collapsible control deck** — a peek bar shows what will be mocked with a single start/stop button; expand it only when you need the full controls
+- **Long-press the map** to drop the pin exactly where you want it
 - Warning banner + guided setup when the app isn't selected as the mock location app (and no nagging when it already is)
 - **Setup & permissions checklist** (overflow menu): mock location app, location, notifications, and battery-optimization exemption — with one-tap fixes
 - Share the selected location as an OpenStreetMap link
 - Tooltips, 48dp touch targets and screen-reader labels/announcements throughout
+- **Settings → Developer** links to the source, the author's GitHub and the issue tracker, and shows the installed version
 
 ## 📋 Prerequisites
 

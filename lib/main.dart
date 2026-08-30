@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:gps_mock/providers/app_state.dart';
 import 'package:gps_mock/ui/splash_screen.dart';
+import 'package:gps_mock/ui/theme.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // The map runs edge to edge behind the system bars.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   runApp(const MockGpsApp());
 }
 
@@ -12,27 +17,17 @@ class MockGpsApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [ChangeNotifierProvider(create: (_) => AppState())],
-      child: MaterialApp(
-        title: 'Mock GPS',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.deepPurple,
-            brightness: Brightness.light,
-          ),
-          useMaterial3: true,
+    return ChangeNotifierProvider(
+      create: (_) => AppState(),
+      child: Consumer<AppState>(
+        builder: (context, appState, _) => MaterialApp(
+          title: 'GPS Mock',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: appState.themeMode,
+          home: const SplashScreen(),
         ),
-        darkTheme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.deepPurple,
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
-        themeMode: ThemeMode.system,
-        home: const SplashScreen(),
       ),
     );
   }
