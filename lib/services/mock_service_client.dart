@@ -13,6 +13,10 @@ class MockStatus {
   final double bearing;
   final double speedMps;
   final bool arrived;
+
+  /// True while a fixed mock is parked on a route's destination, i.e. the
+  /// simulation ran to completion and handed over.
+  final bool arrivedFromRoute;
   final String? routeFile;
 
   const MockStatus({
@@ -26,24 +30,26 @@ class MockStatus {
     this.bearing = 0,
     this.speedMps = 0,
     this.arrived = false,
+    this.arrivedFromRoute = false,
     this.routeFile,
   });
 
   static const inactive = MockStatus(active: false);
 
   factory MockStatus.fromMap(Map map) => MockStatus(
-    active: map['active'] == true,
-    mode: (map['mode'] as String?) ?? 'fixed',
-    latitude: (map['lat'] as num?)?.toDouble() ?? 0,
-    longitude: (map['lng'] as num?)?.toDouble() ?? 0,
-    label: (map['label'] as String?) ?? '',
-    progress: (map['progress'] as num?)?.toDouble() ?? 0,
-    remainingSeconds: (map['remainingSeconds'] as num?)?.toInt() ?? 0,
-    bearing: (map['bearing'] as num?)?.toDouble() ?? 0,
-    speedMps: (map['speedMps'] as num?)?.toDouble() ?? 0,
-    arrived: map['arrived'] == true,
-    routeFile: map['routeFile'] as String?,
-  );
+        active: map['active'] == true,
+        mode: (map['mode'] as String?) ?? 'fixed',
+        latitude: (map['lat'] as num?)?.toDouble() ?? 0,
+        longitude: (map['lng'] as num?)?.toDouble() ?? 0,
+        label: (map['label'] as String?) ?? '',
+        progress: (map['progress'] as num?)?.toDouble() ?? 0,
+        remainingSeconds: (map['remainingSeconds'] as num?)?.toInt() ?? 0,
+        bearing: (map['bearing'] as num?)?.toDouble() ?? 0,
+        speedMps: (map['speedMps'] as num?)?.toDouble() ?? 0,
+        arrived: map['arrived'] == true,
+        arrivedFromRoute: map['arrivedFromRoute'] == true,
+        routeFile: map['routeFile'] as String?,
+      );
 }
 
 class MockServiceClient {
@@ -70,6 +76,7 @@ class MockServiceClient {
     String? fromLabel,
     String? toLabel,
     double? distanceMeters,
+    String? stopsJson,
   }) async {
     await platform.invokeMethod('startRoute', {
       'routeFile': routeFilePath,
@@ -78,6 +85,7 @@ class MockServiceClient {
       'fromLabel': fromLabel,
       'toLabel': toLabel,
       'distanceMeters': distanceMeters,
+      'stopsJson': stopsJson,
     });
   }
 

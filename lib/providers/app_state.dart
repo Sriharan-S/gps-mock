@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/services.dart';
-import 'package:flutter_map/flutter_map.dart' show LatLngBounds;
 import 'package:geolocator/geolocator.dart';
 import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/models/map_style.dart';
@@ -15,6 +15,77 @@ import 'package:latlong2/latlong.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// A geographic box the map can be asked to fit. Kept local so the state
+/// layer doesn't depend on a map rendering package.
+class GeoBounds {
+  const GeoBounds(this.southWest, this.northEast);
+
+  final LatLng southWest;
+  final LatLng northEast;
+
+  factory GeoBounds.fromPoints(List<LatLng> points) {
+    var minLat = points.first.latitude, maxLat = points.first.latitude;
+    var minLng = points.first.longitude, maxLng = points.first.longitude;
+    for (final point in points) {
+      if (point.latitude < minLat) minLat = point.latitude;
+      if (point.latitude > maxLat) maxLat = point.latitude;
+      if (point.longitude < minLng) minLng = point.longitude;
+      if (point.longitude > maxLng) maxLng = point.longitude;
+    }
+    return GeoBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
+  }
+}
+
+/// The area a simulated trip covered, kept so it can later be downloaded for
+/// offline use without having to re-plan the route.
+class RouteArea {
+  const RouteArea(this.label, this.southWest, this.northEast);
+
+  final String label;
+  final LatLng southWest;
+  final LatLng northEast;
+
+  Map<String, dynamic> toJson() => {
+        'label': label,
+        'swLat': southWest.latitude,
+        'swLng': southWest.longitude,
+        'neLat': northEast.latitude,
+        'neLng': northEast.longitude,
+      };
+
+  factory RouteArea.fromJson(Map<String, dynamic> json) => RouteArea(
+        json['label'] as String? ?? 'Route',
+        LatLng(
+          (json['swLat'] as num).toDouble(),
+          (json['swLng'] as num).toDouble(),
+        ),
+        LatLng(
+          (json['neLat'] as num).toDouble(),
+          (json['neLng'] as num).toDouble(),
+        ),
+      );
+}
+
+/// Which leg of the itinerary a map tap should fill in.
+enum WaypointSlot { origin, stop, destination, newStop }
+
+/// A waypoint waiting to be placed by tapping the map.
+class WaypointPick {
+  const WaypointPick(this.slot, {this.index = 0});
+
+  final WaypointSlot slot;
+
+  /// Which stop, when [slot] is [WaypointSlot.stop].
+  final int index;
+
+  String get prompt => switch (slot) {
+        WaypointSlot.origin => 'Tap the map to set the start point',
+        WaypointSlot.destination => 'Tap the map to set the destination',
+        WaypointSlot.stop => 'Tap the map to move stop ${index + 1}',
+        WaypointSlot.newStop => 'Tap the map to add a stop',
+      };
+}
 
 /// An intermediate stop on a planned mock route.
 class RouteStop {
@@ -29,7 +100,7 @@ class RouteStop {
 class CameraRequest {
   final LatLng? target;
   final double zoom;
-  final LatLngBounds? bounds;
+  final GeoBounds? bounds;
   final int token;
   const CameraRequest(this.token, {this.target, this.zoom = 16, this.bounds});
 }
@@ -43,7 +114,10 @@ class AppState with ChangeNotifier {
   bool _initialized = false;
   bool _isMocking = false;
   LatLng? _currentLocation;
-  String _currentAddress = "Move the map to select a location";
+  /// Shown until a real location has been picked or reverse-geocoded.
+  static const _addressPlaceholder = 'Drag the pin to choose a spot';
+
+  String _currentAddress = _addressPlaceholder;
   List<LocationItem> _favorites = [];
   bool? _isMockLocationApp; // null until the native check completes
   CameraRequest? _cameraRequest;
@@ -62,7 +136,10 @@ class AppState with ChangeNotifier {
   String? _routeError;
 
   // UI-level state shared across tabs
-  MapStyleId _mapStyle = MapStyleId.standard;
+  MapStyleId _mapStyle = MapStyleId.auto;
+  ThemeMode _themeMode = ThemeMode.system;
+  List<String> _recentSearches = [];
+  List<RouteArea> _routeAreas = [];
   List<MockHistoryEntry> _history = [];
 
   // Live service status (polled once per second while the app is open)
@@ -71,11 +148,16 @@ class AppState with ChangeNotifier {
   bool _reloadingActiveRoute = false;
   List<LatLng>? _activeRoutePoints;
   DateTime _ignoreInactiveUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _handledRouteHandoff = false;
+  WaypointPick? _pendingWaypointPick;
 
   bool get initialized => _initialized;
   bool get isMocking => _isMocking;
   LatLng? get currentLocation => _currentLocation;
   String get currentAddress => _currentAddress;
+
+  /// Whether the pin has a real label rather than the "drag me" placeholder.
+  bool get hasNamedLocation => _currentAddress != _addressPlaceholder;
   List<LocationItem> get favorites => _favorites;
   bool? get isMockLocationApp => _isMockLocationApp;
   CameraRequest? get cameraRequest => _cameraRequest;
@@ -92,6 +174,10 @@ class AppState with ChangeNotifier {
   bool get fetchingRoute => _fetchingRoute;
   String? get routeError => _routeError;
   MapStyleId get mapStyle => _mapStyle;
+  ThemeMode get themeMode => _themeMode;
+  List<String> get recentSearches => List.unmodifiable(_recentSearches);
+  List<RouteArea> get routeAreas => List.unmodifiable(_routeAreas);
+  WaypointPick? get pendingWaypointPick => _pendingWaypointPick;
   List<MockHistoryEntry> get history => _history;
 
   /// Switches the bottom panel between Fixed and Route mode. When entering
@@ -99,9 +185,14 @@ class AppState with ChangeNotifier {
   void setRouteMode(bool value) {
     if (_routeMode == value) return;
     _routeMode = value;
+    _pendingWaypointPick = null;
     if (value && _routeOrigin == null && _currentLocation != null) {
       _routeOrigin = _currentLocation;
-      _routeOriginLabel = _currentAddress;
+      // The placeholder is an instruction, not a place name — fall back to
+      // coordinates until the pin has a real label.
+      _routeOriginLabel = _currentAddress == _addressPlaceholder
+          ? _format(_currentLocation!)
+          : _currentAddress;
     }
     notifyListeners();
   }
@@ -112,6 +203,37 @@ class AppState with ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('map_style', style.name);
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (_themeMode == mode) return;
+    _themeMode = mode;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('theme_mode', mode.name);
+  }
+
+  /// Remembers a search term so the search sheet can offer it again. Most
+  /// recent first, de-duplicated, capped at six.
+  Future<void> rememberSearch(String term) async {
+    final trimmed = term.trim();
+    if (trimmed.isEmpty) return;
+    _recentSearches
+      ..removeWhere((item) => item.toLowerCase() == trimmed.toLowerCase())
+      ..insert(0, trimmed);
+    if (_recentSearches.length > 6) {
+      _recentSearches = _recentSearches.sublist(0, 6);
+    }
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('recent_searches', _recentSearches);
+  }
+
+  Future<void> clearRecentSearches() async {
+    _recentSearches = [];
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('recent_searches');
   }
 
   MockStatus get mockStatus => _mockStatus;
@@ -138,7 +260,13 @@ class AppState with ChangeNotifier {
       _loadFavorites(prefs);
       unawaited(_syncFavoritesToNative());
       _mapStyle = MapStyleId.values.asNameMap()[prefs.getString('map_style')] ??
-          MapStyleId.standard;
+          MapStyleId.auto;
+      _themeMode = ThemeMode.values.asNameMap()[prefs.getString('theme_mode')] ??
+          ThemeMode.system;
+      _recentSearches = prefs.getStringList('recent_searches') ?? [];
+      _routeAreas = (prefs.getStringList('route_areas') ?? [])
+          .map((item) => RouteArea.fromJson(jsonDecode(item)))
+          .toList();
       unawaited(loadHistory());
       final lastLat = prefs.getDouble('last_lat');
       final lastLng = prefs.getDouble('last_lng');
@@ -244,7 +372,7 @@ class AppState with ChangeNotifier {
   }
 
   /// Asks the map to fit [bounds] (e.g. a whole planned route).
-  void requestCameraBounds(LatLngBounds bounds) {
+  void requestCameraBounds(GeoBounds bounds) {
     _cameraRequest = CameraRequest(++_cameraToken, bounds: bounds);
     notifyListeners();
   }
@@ -310,6 +438,40 @@ class AppState with ChangeNotifier {
     }
   }
 
+  // ------------------------------------------------------- waypoint picking
+
+  /// Arms a waypoint so the next map tap places it.
+  void armWaypointPick(WaypointSlot slot, {int index = 0}) {
+    _pendingWaypointPick = WaypointPick(slot, index: index);
+    notifyListeners();
+  }
+
+  void cancelWaypointPick() {
+    if (_pendingWaypointPick == null) return;
+    _pendingWaypointPick = null;
+    notifyListeners();
+  }
+
+  /// Fills the armed waypoint from a map tap. Returns false when nothing was
+  /// waiting, so the caller can fall back to its normal tap behaviour.
+  bool applyWaypointPick(LatLng location, String label) {
+    final pending = _pendingWaypointPick;
+    if (pending == null) return false;
+    _pendingWaypointPick = null;
+    switch (pending.slot) {
+      case WaypointSlot.origin:
+        setRouteOrigin(location, label);
+      case WaypointSlot.destination:
+        setRouteDestination(location, label);
+      case WaypointSlot.stop:
+        updateRouteStop(pending.index, location, label);
+      case WaypointSlot.newStop:
+        addRouteStop(location, label);
+    }
+    notifyListeners();
+    return true;
+  }
+
   // ------------------------------------------------------- mock navigation
 
   void setRouteOrigin(LatLng location, String label) {
@@ -371,10 +533,10 @@ class AppState with ChangeNotifier {
   void retryRouteFetch() => unawaited(_fetchPlannedRoute());
 
   List<LatLng> get _plannedWaypoints => [
-    if (_routeOrigin != null) _routeOrigin!,
-    ..._routeStops.map((stop) => stop.location),
-    if (_routeDestination != null) _routeDestination!,
-  ];
+        if (_routeOrigin != null) _routeOrigin!,
+        ..._routeStops.map((stop) => stop.location),
+        if (_routeDestination != null) _routeDestination!,
+      ];
 
   Future<void> _fetchPlannedRoute() async {
     _plannedRoute = null;
@@ -392,7 +554,7 @@ class AppState with ChangeNotifier {
       // Ignore stale responses if the endpoints changed mid-fetch.
       if (!listEquals(waypoints, _plannedWaypoints)) return;
       _plannedRoute = route;
-      requestCameraBounds(LatLngBounds.fromPoints(route.points));
+      requestCameraBounds(GeoBounds.fromPoints(route.points));
     } on RouteException catch (e) {
       _routeError = e.message;
     } catch (_) {
@@ -442,11 +604,13 @@ class AppState with ChangeNotifier {
         fromLabel: from,
         toLabel: to,
         distanceMeters: route.distanceMeters,
+        stopsJson: jsonEncode(_notificationStops(route)),
       );
       _isMocking = true;
       _ignoreInactiveUntil = DateTime.now().add(const Duration(seconds: 3));
       notifyListeners();
       unawaited(_maybeRequestBatteryExemption());
+      unawaited(_rememberRouteArea('$from → $to', route.points));
       return MockToggleResult.started;
     } on PlatformException catch (e) {
       _lastError = e.message ?? 'Could not start the route simulation';
@@ -457,6 +621,57 @@ class AppState with ChangeNotifier {
       notifyListeners();
       return MockToggleResult.failed;
     }
+  }
+
+  /// Keeps the last few route corridors so they can be offered as offline
+  /// download areas later.
+  Future<void> _rememberRouteArea(String label, List<LatLng> points) async {
+    if (points.isEmpty) return;
+    final bounds = GeoBounds.fromPoints(points);
+    _routeAreas
+      ..removeWhere((area) => area.label == label)
+      ..insert(0, RouteArea(label, bounds.southWest, bounds.northEast));
+    if (_routeAreas.length > 5) _routeAreas = _routeAreas.sublist(0, 5);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'route_areas',
+      _routeAreas.map((area) => jsonEncode(area.toJson())).toList(),
+    );
+  }
+
+  List<Map<String, Object>> _notificationStops(RouteResult route) {
+    if (_routeStops.isEmpty || route.points.length < 2) return const [];
+    const distance = Distance();
+    final cumulative = List<double>.filled(route.points.length, 0);
+    for (var i = 1; i < route.points.length; i++) {
+      cumulative[i] = cumulative[i - 1] +
+          distance.as(
+            LengthUnit.Meter,
+            route.points[i - 1],
+            route.points[i],
+          );
+    }
+    final total = cumulative.last;
+    return _routeStops.map((stop) {
+      var nearest = 0;
+      var nearestMeters = double.infinity;
+      for (var i = 0; i < route.points.length; i++) {
+        final meters = distance.as(
+          LengthUnit.Meter,
+          stop.location,
+          route.points[i],
+        );
+        if (meters < nearestMeters) {
+          nearestMeters = meters;
+          nearest = i;
+        }
+      }
+      return <String, Object>{
+        'label': stop.label.isEmpty ? 'Stop' : stop.label,
+        'progress': total == 0 ? 0.0 : cumulative[nearest] / total,
+      };
+    }).toList(growable: false);
   }
 
   Future<void> stopNavigation() async {
@@ -529,8 +744,7 @@ class AppState with ChangeNotifier {
       return;
     }
 
-    final changed =
-        status.active != _mockStatus.active ||
+    final changed = status.active != _mockStatus.active ||
         status.mode != _mockStatus.mode ||
         status.latitude != _mockStatus.latitude ||
         status.longitude != _mockStatus.longitude ||
@@ -545,6 +759,26 @@ class AppState with ChangeNotifier {
     // A session started or ended (possibly from a tile/widget/notification):
     // refresh the recorded history.
     if (wasMocking != status.active) unawaited(loadHistory());
+
+    // The route simulation reached its destination and the service handed
+    // over to a fixed mock parked there: leave route mode and follow the pin
+    // to the destination so the UI matches what is actually being mocked.
+    if (status.active &&
+        status.mode == 'fixed' &&
+        status.arrivedFromRoute &&
+        !_handledRouteHandoff) {
+      _handledRouteHandoff = true;
+      _routeMode = false;
+      _activeRoutePoints = null;
+      _plannedRoute = null;
+      final destination = LatLng(status.latitude, status.longitude);
+      _currentLocation = destination;
+      if (status.label.isNotEmpty) _currentAddress = status.label;
+      requestCamera(destination, zoom: 16);
+      unawaited(_persistLastLocation());
+      notifyListeners();
+    }
+    if (!status.arrivedFromRoute) _handledRouteHandoff = false;
 
     // A fixed mock started outside the app (quick-settings tile, widget)
     // while the UI is open: move the pin to what is actually being mocked.
@@ -616,6 +850,33 @@ class AppState with ChangeNotifier {
     notifyListeners();
   }
 
+  /// Starts mocking [item] directly from a list, without a trip through the
+  /// map. Retargets an already-running fixed mock rather than stopping it.
+  Future<MockToggleResult> mockFavoriteNow(LocationItem item) async {
+    final point = LatLng(item.latitude, item.longitude);
+    updateLocation(point, address: item.name);
+    requestCamera(point, zoom: 16);
+    if (_isMocking && !isNavigating) return MockToggleResult.started;
+    if (isNavigating) await stopNavigation();
+    return toggleMocking();
+  }
+
+  Future<void> renameFavorite(LocationItem item, String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final index = _favorites.indexWhere((element) => element.id == item.id);
+    if (index < 0) return;
+    _favorites[index] = LocationItem(
+      id: item.id,
+      latitude: item.latitude,
+      longitude: item.longitude,
+      name: trimmed,
+      address: item.address,
+    );
+    await _saveFavorites();
+    notifyListeners();
+  }
+
   Future<void> removeFavorite(LocationItem item) async {
     _favorites.removeWhere((element) => element.id == item.id);
     await _saveFavorites();
@@ -631,9 +892,8 @@ class AppState with ChangeNotifier {
 
   Future<void> _saveFavorites() async {
     final prefs = await SharedPreferences.getInstance();
-    final favoritesJson = _favorites
-        .map((item) => jsonEncode(item.toJson()))
-        .toList();
+    final favoritesJson =
+        _favorites.map((item) => jsonEncode(item.toJson())).toList();
     await prefs.setStringList('favorites', favoritesJson);
     unawaited(_syncFavoritesToNative());
   }

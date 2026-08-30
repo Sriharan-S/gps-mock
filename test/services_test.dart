@@ -3,6 +3,8 @@ import 'package:gps_mock/models/location_item.dart';
 import 'package:gps_mock/models/mock_history_entry.dart';
 import 'package:gps_mock/services/route_service.dart';
 import 'package:gps_mock/services/search_service.dart';
+import 'package:gps_mock/services/update_service.dart';
+import 'package:latlong2/latlong.dart';
 
 void main() {
   group('RouteService.parseOsrmResponse', () {
@@ -170,6 +172,103 @@ void main() {
       expect(entry.isRunning, isTrue);
       expect(entry.endedAt, isNull);
       expect(entry.latitude, 11.5);
+    });
+  });
+
+  group('SearchService.parseCoordinates', () {
+    test('parses "lat, lng" with and without spaces', () {
+      expect(
+        SearchService.parseCoordinates('12.9716, 77.5946'),
+        const LatLng(12.9716, 77.5946),
+      );
+      expect(
+        SearchService.parseCoordinates('-33.8688 151.2093'),
+        const LatLng(-33.8688, 151.2093),
+      );
+      expect(
+        SearchService.parseCoordinates(' 51;-0.12 '),
+        const LatLng(51, -0.12),
+      );
+    });
+
+    test('rejects place names and out-of-range values', () {
+      expect(SearchService.parseCoordinates('Chennai'), isNull);
+      expect(SearchService.parseCoordinates('91.0, 10.0'), isNull);
+      expect(SearchService.parseCoordinates('10.0, 181.0'), isNull);
+      expect(SearchService.parseCoordinates('12.97'), isNull);
+    });
+  });
+
+  group('UpdateService.isNewer', () {
+    test('compares versions numerically, not as strings', () {
+      expect(UpdateService.isNewer('2.10.0', '2.9.0'), isTrue);
+      expect(UpdateService.isNewer('2.1.0', '2.1.0'), isFalse);
+      expect(UpdateService.isNewer('2.0.9', '2.1.0'), isFalse);
+      expect(UpdateService.isNewer('3.0.0', '2.99.99'), isTrue);
+    });
+
+    test('tolerates v prefixes, build suffixes and short versions', () {
+      expect(UpdateService.isNewer('v2.2.0', '2.1.0'), isTrue);
+      expect(UpdateService.isNewer('v2.2.0+7', '2.2.0'), isFalse);
+      expect(UpdateService.isNewer('2.2', '2.1.9'), isTrue);
+      expect(UpdateService.isNewer('2.1', '2.1.0'), isFalse);
+    });
+
+    test('treats an unknown installed version as out of date', () {
+      expect(UpdateService.isNewer('1.0.0', ''), isTrue);
+      expect(UpdateService.isNewer('', '1.0.0'), isFalse);
+    });
+  });
+
+  group('UpdateService.looksLikeVersion', () {
+    test('accepts dotted numeric versions', () {
+      expect(UpdateService.looksLikeVersion('2.1.0'), isTrue);
+      expect(UpdateService.looksLikeVersion('v2.1.0'), isTrue);
+      expect(UpdateService.looksLikeVersion('2.1.0+3'), isTrue);
+      expect(UpdateService.looksLikeVersion('3'), isTrue);
+    });
+
+    test('rejects date-style tags, which must not be compared numerically', () {
+      expect(UpdateService.looksLikeVersion('v2026-07-29-19'), isFalse);
+      expect(UpdateService.looksLikeVersion('nightly'), isFalse);
+      expect(UpdateService.looksLikeVersion(''), isFalse);
+    });
+  });
+
+  group('UpdateService.parseRelease', () {
+    test('picks the APK asset and normalises the tag', () {
+      const body = '''
+      {
+        "tag_name": "v2.3.0",
+        "name": "GPS Mock 2.3.0",
+        "body": "Adds offline maps.",
+        "html_url": "https://github.com/Sriharan-S/gps-mock/releases/tag/v2.3.0",
+        "published_at": "2026-08-30T04:00:00Z",
+        "assets": [
+          {"name": "notes.txt", "browser_download_url": "https://x/notes.txt", "size": 10},
+          {"name": "gps-mock-2.3.0.apk", "browser_download_url": "https://x/app.apk", "size": 20971520}
+        ]
+      }
+      ''';
+      final release = UpdateService.parseRelease(body)!;
+      expect(release.tag, 'v2.3.0');
+      expect(release.version, '2.3.0');
+      expect(release.name, 'GPS Mock 2.3.0');
+      expect(release.apkUrl, 'https://x/app.apk');
+      expect(release.hasApk, isTrue);
+      expect(release.sizeLabel, '20.0 MB');
+    });
+
+    test('reports a release with no APK so the caller opens the page', () {
+      const body = '{"tag_name": "v2.4.0", "assets": []}';
+      final release = UpdateService.parseRelease(body)!;
+      expect(release.hasApk, isFalse);
+      expect(release.version, '2.4.0');
+    });
+
+    test('ignores drafts', () {
+      const body = '{"tag_name": "v9.0.0", "draft": true, "assets": []}';
+      expect(UpdateService.parseRelease(body), isNull);
     });
   });
 }

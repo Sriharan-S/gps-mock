@@ -44,6 +44,7 @@ class MainActivity : FlutterActivity() {
                             putExtra(MockingService.EXTRA_LABEL, call.argument<String>("label"))
                             putExtra(MockingService.EXTRA_FROM_LABEL, call.argument<String>("fromLabel"))
                             putExtra(MockingService.EXTRA_TO_LABEL, call.argument<String>("toLabel"))
+                            putExtra(MockingService.EXTRA_STOPS_JSON, call.argument<String>("stopsJson"))
                             putExtra(
                                 MockingService.EXTRA_DISTANCE_METERS,
                                 call.argument<Double>("distanceMeters") ?: 0.0
@@ -88,9 +89,97 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                 }
+                "getAppVersion" -> {
+                    val info = packageManager.getPackageInfo(packageName, 0)
+                    result.success(
+                        mapOf(
+                            "versionName" to (info.versionName ?: ""),
+                            "packageName" to packageName,
+                        )
+                    )
+                }
+                "canInstallPackages" -> result.success(canInstallPackages())
+                "requestInstallPermission" -> {
+                    requestInstallPermission()
+                    result.success(null)
+                }
+                "installApk" -> {
+                    val path = call.argument<String>("path")
+                    if (path == null) {
+                        result.error("INVALID_ARGS", "path missing", null)
+                    } else {
+                        try {
+                            installApk(path)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("INSTALL_FAILED", e.message, null)
+                        }
+                    }
+                }
+                "openUrl" -> {
+                    val url = call.argument<String>("url")
+                    if (url == null) {
+                        result.error("INVALID_ARGS", "url missing", null)
+                    } else {
+                        try {
+                            startActivity(
+                                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    /** Whether the user has allowed this app to install APKs. Below Android
+     *  O the permission is granted at install time. */
+    private fun canInstallPackages(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+    }
+
+    /** Sends the user to the system screen where "install unknown apps" is
+     *  granted for this app. */
+    private fun requestInstallPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    android.net.Uri.parse("package:$packageName"),
+                )
+            )
+        } catch (e: Exception) {
+            startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
+        }
+    }
+
+    /** Hands a downloaded APK to the system installer. The file is shared
+     *  through a FileProvider because a raw file:// URI is rejected from
+     *  Android N onwards. */
+    private fun installApk(path: String) {
+        val file = java.io.File(path)
+        if (!file.exists()) throw IllegalStateException("Update file is missing")
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            this,
+            "$packageName.updates",
+            file,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     private fun startMockingService(intent: Intent) {
