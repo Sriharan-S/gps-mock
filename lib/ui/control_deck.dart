@@ -32,6 +32,22 @@ class _ControlDeckState extends State<ControlDeck> {
   final GlobalKey _deckKey = GlobalKey();
   bool _open = true;
 
+  /// How far the current drag has travelled (down is positive), and whether
+  /// one is in progress. The deck follows a downward drag so collapsing it
+  /// feels like pulling a sheet, then snaps open or shut on release.
+  double _dragDy = 0;
+  bool _dragging = false;
+
+  /// Pull-down distance accumulated while the panel's content is already
+  /// scrolled to the top.
+  double _overscroll = 0;
+
+  /// Travel or fling speed past which a drag counts as a deliberate toggle.
+  /// Distance matters as much as speed: a slow pull that stops before the
+  /// finger lifts has almost no release velocity.
+  static const _toggleDistance = 40.0;
+  static const _toggleVelocity = 300.0;
+
   void _reportHeight() {
     final box = _deckKey.currentContext?.findRenderObject() as RenderBox?;
     if (box != null && box.hasSize) {
@@ -45,15 +61,100 @@ class _ControlDeckState extends State<ControlDeck> {
     setState(() => _open = value);
   }
 
+  void _onDragStart(DragStartDetails details) {
+    setState(() {
+      _dragging = true;
+      _dragDy = 0;
+    });
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() => _dragDy += details.primaryDelta ?? 0);
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    final dy = _dragDy;
+    setState(() {
+      _dragging = false;
+      _dragDy = 0;
+    });
+    if (velocity > _toggleVelocity || dy > _toggleDistance) {
+      _setOpen(false);
+    } else if (velocity < -_toggleVelocity || dy < -_toggleDistance) {
+      _setOpen(true);
+    }
+  }
+
+  void _onDragCancel() {
+    if (!_dragging) return;
+    setState(() {
+      _dragging = false;
+      _dragDy = 0;
+    });
+  }
+
+  /// Lets a pull-down on the open panel collapse the deck once its content
+  /// is scrolled to the top, the way a bottom sheet hands the gesture over.
+  bool _onContentScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is OverscrollNotification &&
+        notification.dragDetails != null &&
+        notification.overscroll < 0) {
+      _overscroll -= notification.overscroll;
+      if (_overscroll > _toggleDistance) {
+        _overscroll = 0;
+        _setOpen(false);
+      }
+    } else if (notification is ScrollStartNotification ||
+        notification is ScrollEndNotification) {
+      _overscroll = 0;
+    }
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    final scheme = Theme.of(context).colorScheme;
     final navigating = appState.isNavigating;
     final routeMode = appState.routeMode || navigating;
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _reportHeight());
 
+    // Only a downward pull on the open deck moves it; the rest snaps on
+    // release.
+    final followDy = _open ? math.max(0.0, _dragDy) : 0.0;
+
+    // The whole deck is the drag handle, not just the thin grabber: the peek
+    // bar and any panel content that doesn't scroll pass vertical drags up to
+    // here, while content that does scroll keeps them and hands over through
+    // [_onContentScroll] once it reaches the top.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragStart: _onDragStart,
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      onVerticalDragCancel: _onDragCancel,
+      child: AnimatedContainer(
+        duration:
+            _dragging ? Duration.zero : const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        transform: Matrix4.translationValues(0, followDy, 0),
+        child: _buildDeck(
+          context,
+          navigating: navigating,
+          routeMode: routeMode,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeck(
+    BuildContext context, {
+    required bool navigating,
+    required bool routeMode,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
     return Material(
       key: _deckKey,
       color: scheme.surface,
@@ -80,7 +181,6 @@ class _ControlDeckState extends State<ControlDeck> {
                 _Grabber(
                   open: _open,
                   onToggle: () => _setOpen(!_open),
-                  onDrag: _setOpen,
                 ),
                 _PeekBar(
                   open: _open,
@@ -88,23 +188,26 @@ class _ControlDeckState extends State<ControlDeck> {
                 ),
                 if (_open)
                   Flexible(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (!navigating) ...[
-                            _ModeSwitch(routeMode: routeMode),
-                            const SizedBox(height: 18),
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: _onContentScroll,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (!navigating) ...[
+                              _ModeSwitch(routeMode: routeMode),
+                              const SizedBox(height: 18),
+                            ],
+                            if (navigating)
+                              const _LiveRoutePanel()
+                            else if (routeMode)
+                              const _RoutePlannerPanel()
+                            else
+                              const _FixedSpotPanel(),
                           ],
-                          if (navigating)
-                            const _LiveRoutePanel()
-                          else if (routeMode)
-                            const _RoutePlannerPanel()
-                          else
-                            const _FixedSpotPanel(),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -117,18 +220,13 @@ class _ControlDeckState extends State<ControlDeck> {
   }
 }
 
-/// The handle. Tapping toggles the deck; dragging it does the same with
-/// direction, so the deck behaves the way a sheet is expected to.
+/// The handle. Tapping toggles the deck; dragging is handled by the deck
+/// itself so the whole surface responds, not just this strip.
 class _Grabber extends StatelessWidget {
-  const _Grabber({
-    required this.open,
-    required this.onToggle,
-    required this.onDrag,
-  });
+  const _Grabber({required this.open, required this.onToggle});
 
   final bool open;
   final VoidCallback onToggle;
-  final ValueChanged<bool> onDrag;
 
   @override
   Widget build(BuildContext context) {
@@ -139,10 +237,6 @@ class _Grabber extends StatelessWidget {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onToggle,
-        onVerticalDragEnd: (details) {
-          final velocity = details.primaryVelocity ?? 0;
-          if (velocity.abs() > 60) onDrag(velocity < 0);
-        },
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 11),
           child: Center(

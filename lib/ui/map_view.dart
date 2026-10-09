@@ -967,7 +967,11 @@ class MapViewState extends State<MapView> with WidgetsBindingObserver {
   /// Long-pressing the map moves the pin straight there.
   void _onLongPress(LatLng point) {
     final appState = context.read<AppState>();
-    if (appState.isNavigating) return;
+    // Route mode has no fixed pin to move, and MapLibre starts a waypoint
+    // drag with a long press — treating it as a pin move would retarget a
+    // still-running fixed mock (e.g. the one parked on a finished route's
+    // destination) to wherever a waypoint is being dragged.
+    if (appState.isNavigating || appState.routeMode) return;
     HapticFeedback.mediumImpact();
     appState.updateLocation(point);
     _reverseGeocode(point);

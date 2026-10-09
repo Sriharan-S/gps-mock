@@ -15,4 +15,6 @@
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- Favorite widget picker (see values/styles.xml). -->
+    <style name="WidgetConfigTheme" parent="@android:style/Theme.DeviceDefault.Dialog" />
 </resources>
