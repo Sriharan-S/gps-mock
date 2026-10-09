@@ -15,4 +15,9 @@
     <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
+    <!-- Favorite widget picker. A floating dialog is exempt from the
+         edge-to-edge layout enforced from Android 15, which otherwise draws
+         the first rows of a full-screen list under the status and action
+         bars. -->
+    <style name="WidgetConfigTheme" parent="@android:style/Theme.DeviceDefault.Light.Dialog" />
 </resources>

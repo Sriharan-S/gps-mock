@@ -132,7 +132,8 @@
         </receiver>
         <activity
             android:name=".widgets.FavoriteWidgetConfigActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@style/WidgetConfigTheme">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
             </intent-filter>
