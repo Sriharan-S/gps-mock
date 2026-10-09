@@ -19,7 +19,10 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.drawable.Icon
+import android.annotation.SuppressLint
 import androidx.core.app.NotificationCompat
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
 import com.sriharan.gps_mock.tiles.BaseFavoriteTileService
 import com.sriharan.gps_mock.widgets.FavoriteWidgetProvider
 import com.sriharan.gps_mock.widgets.NavigationWidgetProvider
@@ -36,11 +39,23 @@ import kotlin.math.ln
 import kotlin.math.tan
 
 class MockingService : Service() {
+    // Written from the main thread (new commands) and from the route loop
+    // itself (hand-off on arrival); volatile so a new command always cancels
+    // the loop that is actually running instead of leaving two pushing.
+    @Volatile
     private var job: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     @Volatile
     private var pushFailureAlerted = false
+
+    /** Google Play services' fused provider, which most apps read through.
+     *  It blends GPS with Wi-Fi/cell fixes computed inside Play services, so
+     *  LocationManager test providers alone can't stop the real position
+     *  from bleeding through — it has to be put into mock mode itself. */
+    private val fusedClient: FusedLocationProviderClient by lazy {
+        LocationServices.getFusedLocationProviderClient(this)
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -577,7 +592,14 @@ class MockingService : Service() {
 
     // ------------------------------------------------------------- providers
 
+    @SuppressLint("MissingPermission")
     private fun installTestProvider(locationManager: LocationManager) {
+        try {
+            fusedClient.setMockMode(true)
+        } catch (e: Exception) {
+            // No Play services, or not the mock location app — the
+            // LocationManager providers below still cover framework readers.
+        }
         // Mock every provider a consumer might read. Mocking GPS alone leaves
         // the network provider (and therefore the fused provider that most
         // apps actually use) reporting the device's real position, which
@@ -607,6 +629,7 @@ class MockingService : Service() {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun pushMockLocation(
         locationManager: LocationManager,
         lat: Double,
@@ -617,21 +640,7 @@ class MockingService : Service() {
         var pushedAny = false
         var refused = false
         for (provider in PROVIDERS) {
-            val mockLocation = Location(provider).apply {
-                latitude = lat
-                longitude = lng
-                altitude = 10.0
-                time = System.currentTimeMillis()
-                speed = speedMps
-                this.bearing = bearing
-                accuracy = 1.0f
-                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    bearingAccuracyDegrees = 0.1f
-                    verticalAccuracyMeters = 0.1f
-                    speedAccuracyMetersPerSecond = 0.1f
-                }
-            }
+            val mockLocation = buildLocation(provider, lat, lng, bearing, speedMps)
             try {
                 locationManager.setTestProviderLocation(provider, mockLocation)
                 pushedAny = true
@@ -643,9 +652,45 @@ class MockingService : Service() {
                 // Transient failure, or this device has no such provider.
             }
         }
+        try {
+            fusedClient.setMockLocation(buildLocation(FUSED, lat, lng, bearing, speedMps))
+        } catch (e: Exception) {
+            // Play services unavailable — framework providers were still fed.
+        }
         // Only warn when nothing at all got through: a device that lacks the
         // network provider is not a misconfiguration.
         if (!pushedAny && refused) onMockPushRejected()
+    }
+
+    private fun buildLocation(
+        provider: String,
+        lat: Double,
+        lng: Double,
+        bearing: Float,
+        speedMps: Float,
+    ): Location = Location(provider).apply {
+        latitude = lat
+        longitude = lng
+        altitude = 10.0
+        time = System.currentTimeMillis()
+        speed = speedMps
+        this.bearing = bearing
+        accuracy = 1.0f
+        elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            bearingAccuracyDegrees = 0.1f
+            verticalAccuracyMeters = 0.1f
+            speedAccuracyMetersPerSecond = 0.1f
+        }
+    }
+
+    /** Hands Play services' fused provider back to real fixes. */
+    private fun releaseFusedMock() {
+        try {
+            fusedClient.setMockMode(false)
+        } catch (e: Exception) {
+            // Play services unavailable — nothing to release.
+        }
     }
 
     /** Heads-up alert so a rejected mock never fails silently. */
@@ -698,6 +743,7 @@ class MockingService : Service() {
         MockStateStore.setActiveCommand(this, null)
         status = null
         job?.cancel()
+        releaseFusedMock()
         BaseFavoriteTileService.refreshAll(this)
         FavoriteWidgetProvider.refreshAll(this)
         NavigationWidgetProvider.pushIdle(this)
@@ -709,6 +755,7 @@ class MockingService : Service() {
         super.onDestroy()
         job?.cancel()
         status = null
+        releaseFusedMock()
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         for (provider in PROVIDERS) {
             try {
@@ -733,13 +780,20 @@ class MockingService : Service() {
         const val EXTRA_STOPS_JSON = "STOPS_JSON"
         const val MODE_FIXED = "fixed"
         const val MODE_ROUTE = "route"
-        /** Every provider the service mocks. Consumers read location through
-         *  the fused provider, which blends GPS and network — so both must be
-         *  held at the mock position or the real one bleeds through. */
-        private val PROVIDERS = listOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-        )
+        /** Every LocationManager provider the service mocks. Fused readers
+         *  blend GPS and network, so both must be held at the mock position
+         *  or the real one bleeds through; Android 12+ also exposes the
+         *  platform's own fused provider, which is fed directly too. */
+        private val PROVIDERS = buildList {
+            add(LocationManager.GPS_PROVIDER)
+            add(LocationManager.NETWORK_PROVIDER)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(LocationManager.FUSED_PROVIDER)
+            }
+        }
+
+        /** Provider name stamped on fixes handed to Play services. */
+        private const val FUSED = "fused"
 
         /** How often mock fixes are pushed. Faster than 1 Hz so a real fix is
          *  never the most recent one a consumer sees between our updates. */

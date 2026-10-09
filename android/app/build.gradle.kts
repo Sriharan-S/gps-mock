@@ -61,3 +61,9 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Fused-provider mock mode (see MockingService). geolocator already pulls
+    // this library in transitively; declared here because the app calls it.
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+}
