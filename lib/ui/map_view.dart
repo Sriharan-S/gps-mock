@@ -900,6 +900,7 @@ class MapViewState extends State<MapView> with WidgetsBindingObserver {
                 },
                 onMapClick: _onMapClick,
                 onMapLongClick: (point, coordinates) => _onLongPress(
+                  point,
                   LatLng(coordinates.latitude, coordinates.longitude),
                 ),
               ),
@@ -964,18 +965,99 @@ class MapViewState extends State<MapView> with WidgetsBindingObserver {
     );
   }
 
-  /// Long-pressing the map moves the pin straight there.
-  void _onLongPress(LatLng point) {
+  /// Long-pressing the map moves the pin straight there; in route mode it
+  /// offers to put a waypoint there instead.
+  void _onLongPress(math.Point<double> screen, LatLng point) {
     final appState = context.read<AppState>();
-    // Route mode has no fixed pin to move, and MapLibre starts a waypoint
-    // drag with a long press — treating it as a pin move would retarget a
+    if (appState.isNavigating) return;
+    // Route mode has no fixed pin to move. Moving it anyway would retarget a
     // still-running fixed mock (e.g. the one parked on a finished route's
-    // destination) to wherever a waypoint is being dragged.
-    if (appState.isNavigating || appState.routeMode) return;
+    // destination) — and pressing and holding a waypoint before dragging it
+    // fires a long press too.
+    if (appState.routeMode) {
+      unawaited(_offerWaypointMenu(appState, screen, point));
+      return;
+    }
     HapticFeedback.mediumImpact();
     appState.updateLocation(point);
     _reverseGeocode(point);
     _announce('Pin moved');
+  }
+
+  /// The long-press menu in route mode: make the pressed spot the start, a
+  /// stop or the destination. Skipped when the press landed on a waypoint
+  /// pin, since that is the start of a drag rather than a request.
+  Future<void> _offerWaypointMenu(
+    AppState appState,
+    math.Point<double> screen,
+    LatLng point,
+  ) async {
+    final controller = _mapController;
+    if (controller == null) return;
+    // Long-press and pin positions are both in physical pixels.
+    final ratio = MediaQuery.of(context).devicePixelRatio;
+    final waypoints = [
+      if (appState.routeOrigin != null) appState.routeOrigin!,
+      ...appState.routeStops.map((stop) => stop.location),
+      if (appState.routeDestination != null) appState.routeDestination!,
+    ];
+    if (waypoints.isNotEmpty) {
+      try {
+        final pins = await controller.toScreenLocationBatch(
+          waypoints.map(_toMl),
+        );
+        // The pin image is anchored at its tip, so it sits above the point.
+        final onPin = pins.any((pin) {
+          final dx = (screen.x - pin.x).abs() / ratio;
+          final dy = (screen.y - pin.y) / ratio;
+          return dx < 28 && dy > -56 && dy < 14;
+        });
+        if (onPin) return;
+      } catch (_) {
+        // Projection unavailable — offer the menu anyway.
+      }
+    }
+    if (!mounted) return;
+
+    HapticFeedback.mediumImpact();
+    final position = Offset(screen.x / ratio, screen.y / ratio);
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final slot = await showMenu<WaypointSlot>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(position.dx, position.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem(
+          value: WaypointSlot.origin,
+          child: ListTile(
+            leading: Icon(Icons.trip_origin),
+            title: Text('Set as start'),
+          ),
+        ),
+        PopupMenuItem(
+          value: WaypointSlot.newStop,
+          enabled: appState.routeOrigin != null,
+          child: const ListTile(
+            leading: Icon(Icons.add_location_alt_outlined),
+            title: Text('Add a stop here'),
+          ),
+        ),
+        const PopupMenuItem(
+          value: WaypointSlot.destination,
+          child: ListTile(
+            leading: Icon(Icons.place),
+            title: Text('Set as destination'),
+          ),
+        ),
+      ],
+    );
+    if (slot == null || !mounted) return;
+    final pick = WaypointPick(slot);
+    _setWaypoint(appState, pick, point);
+    _announce('Waypoint set');
+    unawaited(_labelWaypoint(appState, pick, point));
   }
 
   // -------------------------------------------------------------- top bar
