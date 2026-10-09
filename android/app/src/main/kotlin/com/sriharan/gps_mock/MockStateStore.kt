@@ -15,6 +15,7 @@ object MockStateStore {
     private const val PREFS = "gps_mock_state"
     private const val KEY_ACTIVE_COMMAND = "active_command"
     private const val KEY_FAVORITES = "favorites_json"
+    private const val KEY_TILE_SLOTS = "tile_slots_json"
     private const val KEY_WIDGET_FAVORITE_PREFIX = "widget_favorite_"
     private const val KEY_HISTORY = "history_json"
     private const val HISTORY_LIMIT = 100
@@ -62,6 +63,25 @@ object MockStateStore {
 
     fun findFavorite(context: Context, id: String): Favorite? =
         getFavorites(context).firstOrNull { it.id == id }
+
+    /** Quick-settings tile slot -> favorite id, mirrored from Flutter as a
+     *  JSON array of ids ("" for an empty slot). */
+    fun setTileSlotsJson(context: Context, json: String) {
+        prefs(context).edit().putString(KEY_TILE_SLOTS, json).apply()
+    }
+
+    /** The favorite shown on tile [slot]. Before the app has ever synced an
+     *  assignment, tiles fall back to the first favorites in list order. */
+    fun tileFavorite(context: Context, slot: Int): Favorite? {
+        val raw = prefs(context).getString(KEY_TILE_SLOTS, null)
+            ?: return getFavorites(context).getOrNull(slot)
+        val id = try {
+            JSONArray(raw).optString(slot, "")
+        } catch (e: Exception) {
+            ""
+        }
+        return if (id.isEmpty()) null else findFavorite(context, id)
+    }
 
     /** Home-screen widget id -> favorite id binding (set by the widget's
      *  configuration activity). */

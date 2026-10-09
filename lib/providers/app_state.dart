@@ -119,6 +119,19 @@ class AppState with ChangeNotifier {
 
   String _currentAddress = _addressPlaceholder;
   List<LocationItem> _favorites = [];
+
+  /// Favorite id shown on each quick-settings tile ('' when unassigned),
+  /// or null until the user assigns one — tiles then show the first
+  /// favorites in list order, as they always did.
+  static const tileSlotCount = 4;
+  List<String>? _assignedTileSlots;
+
+  List<String> get _tileSlots =>
+      _assignedTileSlots ??
+      List.generate(
+        tileSlotCount,
+        (slot) => slot < _favorites.length ? _favorites[slot].id : '',
+      );
   bool? _isMockLocationApp; // null until the native check completes
   CameraRequest? _cameraRequest;
   int _cameraToken = 0;
@@ -159,6 +172,22 @@ class AppState with ChangeNotifier {
   /// Whether the pin has a real label rather than the "drag me" placeholder.
   bool get hasNamedLocation => _currentAddress != _addressPlaceholder;
   List<LocationItem> get favorites => _favorites;
+
+  /// The tile [item] is assigned to (0-based), or null.
+  int? tileSlotOf(LocationItem item) {
+    final index = _tileSlots.indexOf(item.id);
+    return index < 0 ? null : index;
+  }
+
+  /// The favorite currently on tile [slot], if it still exists.
+  LocationItem? favoriteOnTile(int slot) {
+    final id = _tileSlots[slot];
+    if (id.isEmpty) return null;
+    for (final item in _favorites) {
+      if (item.id == id) return item;
+    }
+    return null;
+  }
   bool? get isMockLocationApp => _isMockLocationApp;
   CameraRequest? get cameraRequest => _cameraRequest;
   String? get lastError => _lastError;
@@ -833,6 +862,28 @@ class AppState with ChangeNotifier {
     _favorites = favoritesJson
         .map((item) => LocationItem.fromJson(jsonDecode(item)))
         .toList();
+    final slots = prefs.getStringList('tile_slots');
+    if (slots != null) {
+      _assignedTileSlots = List.generate(
+        tileSlotCount,
+        (slot) => slot < slots.length ? slots[slot] : '',
+      );
+    }
+  }
+
+  /// Puts [item] on tile [slot] (null removes it from whichever tile it is
+  /// on). A favorite sits on at most one tile.
+  Future<void> assignTile(LocationItem item, int? slot) async {
+    final slots = [..._tileSlots];
+    for (var i = 0; i < tileSlotCount; i++) {
+      if (slots[i] == item.id) slots[i] = '';
+    }
+    if (slot != null) slots[slot] = item.id;
+    _assignedTileSlots = slots;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('tile_slots', slots);
+    unawaited(_syncFavoritesToNative());
   }
 
   Future<void> addFavorite(String name) async {
@@ -904,7 +955,7 @@ class AppState with ChangeNotifier {
     final json = jsonEncode(
       _favorites.map((item) => item.toJson()).toList(growable: false),
     );
-    await _client.syncFavorites(json);
+    await _client.syncFavorites(json, tileSlotsJson: jsonEncode(_tileSlots));
   }
 
   // ------------------------------------------------------------------- misc
