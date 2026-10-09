@@ -27,16 +27,19 @@ A Flutter-based Android app for mocking/spoofing GPS locations on your device. S
 Simulate actually *travelling* a route — perfect for testing turn-by-turn navigation in My Globe:
 
 1. Tap **Directions** in the bottom panel (or switch it to **Route**)
-2. Pick a start and destination — **tap a waypoint to place it by tapping the map, or tap it again to search** (the search also offers "choose on the map" and the current pin) — e.g. **Chennai → Salem** — and add **stops** in between if you like. The start is a **green pin**, stops are **numbered blue pins**, the destination is a **red pin**, and each can be dragged on the map
+2. Pick a start and destination — **tap a waypoint to place it by tapping the map, or tap it again to search** (the search also offers "choose on the map" and the current pin) — e.g. **Chennai → Salem** — and add **stops** in between if you like. The start is a **green pin**, stops are **numbered blue pins**, the destination is a **red pin**, and each can be dragged on the map. You can also **long-press the map** and choose *Set as start*, *Add a stop here* or *Set as destination*
 3. GPS Mock fetches the real driving route (free [OSRM](http://project-osrm.org/) routing, no key needed) and shows it on the map with distance and a realistic duration
-4. Choose how long the trip should take — either a **duration** in minutes, or an **"arrive by"** time/date (GPS Mock works out the pace)
+4. Choose how long the trip should take — a **duration** in minutes, an **average speed** (tap the km/h figure), or an **"arrive by"** time/date (GPS Mock works out the pace)
 5. **START ROUTE**: your device's GPS now moves along the actual roads with correct **speed and bearing**, arriving exactly on schedule
 6. On arrival GPS Mock **hands the destination over to a fixed-spot mock**, so the device simply stays parked there until you stop it
 
 The simulation runs natively in the foreground service, so it keeps driving even if you close the app. Reopen anytime to see live progress, remaining time, and a camera-follow mode.
 
 ### 📟 Quick Settings Tiles
-Add up to **4 tiles** (one per saved favorite) to your notification shade. Toggle a tile to instantly mock that location **without opening the app** — turning one on automatically turns the others off.
+Add up to **4 tiles** to your notification shade and choose which saved favorite each one mocks (**Library → ⋮ → Quick-settings tile…**). Toggle a tile to instantly mock that location **without opening the app** — turning one on automatically turns the others off.
+
+### 🔗 Open locations from other apps
+Share a place from Google Maps (or any app) to **GPS Mock**, or open a map link with it, and the pin jumps straight there — a running fixed mock follows. Supported: `geo:` links, Google Maps links (including `maps.app.goo.gl` short links), OpenStreetMap, Apple Maps, Waze and Bing Maps links, and plain `lat, lng` text. Directions links set the route destination instead. Anything GPS Mock can't read gets a clear explanation (unsupported site, no location in the link, coordinates out of range, place not found, no connection for a short link) along with the link itself, so it can be copied.
 
 ### 🧩 Home-Screen Widgets
 - **Favorite toggle widget**: bind a widget to any saved location and toggle mocking right from your home screen
@@ -54,7 +57,7 @@ GPS Mock checks its own GitHub releases once per launch and offers whatever is n
 
 ### 🎨 Quality of life
 - Material Design 3 throughout, with a **light / dark / follow-system** theme switch in the overflow menu (the map follows it too)
-- **Collapsible control deck** — a peek bar shows what will be mocked with a single start/stop button; expand it only when you need the full controls
+- **Bottom sheet control deck** — drag it anywhere between a peek bar (what will be mocked and a single start/stop button), half open with the full controls, and fully open for long itineraries
 - **Long-press the map** to drop the pin exactly where you want it
 - Warning banner + guided setup when the app isn't selected as the mock location app (and no nagging when it already is)
 - **Setup & permissions checklist** (overflow menu): mock location app, location, notifications, and battery-optimization exemption — with one-tap fixes
@@ -152,7 +155,7 @@ The **History** tab logs every mock session — fixed locations and simulated ro
 ### 📟 Quick settings tiles
 1. Save at least one favorite
 2. Open the notification shade → tap the ✏️ edit button → drag the **GPS Mock favorite 1–4** tiles into your quick settings
-3. Tiles map to your first four favorites (in list order) and show their names
+3. Choose which favorite each tile mocks from **Library → ⋮ → Quick-settings tile…** (until you do, tiles show your first four favorites); assigned favorites carry a **Tile N** badge
 4. Tap to mock / tap again to stop — no need to open the app
 
 ### 🧩 Widgets
