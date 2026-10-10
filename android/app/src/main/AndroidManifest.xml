@@ -58,6 +58,45 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Incoming locations: geo: links, map-site links and text
+                 shared from other apps (e.g. Google Maps' Share button). The
+                 Flutter side parses them and explains any it can't read. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="geo" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="maps.google.com" />
+                <data android:host="maps.app.goo.gl" />
+                <data android:host="www.openstreetmap.org" />
+                <data android:host="openstreetmap.org" />
+                <data android:host="osm.org" />
+                <data android:host="maps.apple.com" />
+                <data android:host="waze.com" />
+                <data android:host="www.waze.com" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="www.google.com" />
+                <data android:host="google.com" />
+                <data android:host="goo.gl" />
+                <data android:pathPrefix="/maps" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <service
@@ -76,7 +115,8 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
-        <!-- Quick-settings tiles: one per saved favorite (first four). -->
+        <!-- Quick-settings tiles: four slots, each assigned a favorite in the
+             Library. -->
         <service
             android:name=".tiles.FavoriteTileService1"
             android:exported="true"

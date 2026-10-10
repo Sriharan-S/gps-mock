@@ -137,9 +137,15 @@ class MockServiceClient {
 
   /// Mirrors the favorites list into native storage so quick-settings tiles
   /// and widgets can read it without the Flutter engine running.
-  Future<void> syncFavorites(String favoritesJson) async {
+  Future<void> syncFavorites(
+    String favoritesJson, {
+    String? tileSlotsJson,
+  }) async {
     try {
-      await platform.invokeMethod('syncFavorites', {'json': favoritesJson});
+      await platform.invokeMethod('syncFavorites', {
+        'json': favoritesJson,
+        'tileSlots': tileSlotsJson,
+      });
     } catch (_) {
       // Non-critical: tiles/widgets just keep the previous snapshot.
     }

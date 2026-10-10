@@ -413,6 +413,7 @@ class _SavedRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final tileSlot = context.watch<AppState>().tileSlotOf(item);
 
     return Dismissible(
       key: ValueKey(item.id),
@@ -434,6 +435,7 @@ class _SavedRow extends StatelessWidget {
       child: Semantics(
         // Spoken as one coherent row rather than four disconnected strings.
         label: 'Saved location $position of $total. ${item.name}. '
+            '${tileSlot == null ? '' : 'On quick-settings tile ${tileSlot + 1}. '}'
             '${item.address}',
         button: true,
         child: ExcludeSemantics(
@@ -466,13 +468,24 @@ class _SavedRow extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              item.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    item.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        theme.textTheme.titleSmall?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (tileSlot != null) ...[
+                                  const SizedBox(width: 8),
+                                  _TileBadge(slot: tileSlot),
+                                ],
+                              ],
                             ),
                             const SizedBox(height: 2),
                             Text(
@@ -537,6 +550,11 @@ class _SavedRow extends StatelessWidget {
           leadingIcon: const Icon(Icons.drive_file_rename_outline),
           onPressed: () => _rename(context),
           child: const Text('Rename'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.grid_view_rounded),
+          onPressed: () => _pickTile(context),
+          child: const Text('Quick-settings tile…'),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.copy_rounded),
@@ -607,6 +625,47 @@ class _SavedRow extends StatelessWidget {
     if (name != null) await appState.renameFavorite(item, name);
   }
 
+  /// Lets the user choose which of the four quick-settings tiles shows this
+  /// favorite, showing what each tile holds now.
+  Future<void> _pickTile(BuildContext context) async {
+    final appState = context.read<AppState>();
+    final current = appState.tileSlotOf(item);
+    // -1 stands for "no tile"; null means the dialog was dismissed.
+    final choice = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text('Tile for "${item.name}"'),
+        children: [
+          for (var slot = 0; slot < AppState.tileSlotCount; slot++)
+            _TileOption(
+              slot: slot,
+              selected: current == slot,
+              occupant: appState.favoriteOnTile(slot),
+              onTap: () => Navigator.pop(dialogContext, slot),
+            ),
+          if (current != null)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, -1),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 6),
+                child: Text('Remove from its tile'),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+            child: Text(
+              'Add the "GPS Mock favorite" tiles from the quick-settings edit '
+              'screen; each one mocks the favorite assigned here.',
+              style: Theme.of(dialogContext).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (choice == null) return;
+    await appState.assignTile(item, choice < 0 ? null : choice);
+  }
+
   void _delete(BuildContext context) {
     final appState = context.read<AppState>();
     final removed = item;
@@ -632,6 +691,96 @@ class _SavedRow extends StatelessWidget {
     if (words.length == 1) return words.first.characters.first.toUpperCase();
     return (words[0].characters.first + words[1].characters.first)
         .toUpperCase();
+  }
+}
+
+/// Small "Tile N" marker on a saved row assigned to a quick-settings tile.
+class _TileBadge extends StatelessWidget {
+  const _TileBadge({required this.slot});
+
+  final int slot;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.grid_view_rounded,
+            size: 11,
+            color: scheme.onSecondaryContainer,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Tile ${slot + 1}',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSecondaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One choice in the tile picker: the slot and what it holds now.
+class _TileOption extends StatelessWidget {
+  const _TileOption({
+    required this.slot,
+    required this.selected,
+    required this.occupant,
+    required this.onTap,
+  });
+
+  final int slot;
+  final bool selected;
+  final LocationItem? occupant;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SimpleDialogOption(
+      onPressed: onTap,
+      child: Row(
+        children: [
+          Icon(
+            selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+            color: selected ? theme.colorScheme.primary : null,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Tile ${slot + 1}', style: theme.textTheme.titleSmall),
+                Text(
+                  occupant == null
+                      ? 'Empty'
+                      : selected
+                          ? 'This location'
+                          : 'Replaces "${occupant!.name}"',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

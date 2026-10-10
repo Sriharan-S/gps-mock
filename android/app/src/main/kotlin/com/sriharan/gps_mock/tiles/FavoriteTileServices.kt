@@ -12,7 +12,8 @@ import com.sriharan.gps_mock.MockController
 import com.sriharan.gps_mock.MockStateStore
 
 /**
- * Quick-settings tiles: one per saved favorite (first four, in list order).
+ * Quick-settings tiles: four slots, each assigned a saved favorite from the
+ * app's Library (see MockStateStore.tileFavorite).
  * Turning a tile on mocks that favorite without opening the app; because
  * only one location can be mocked at a time, activating a tile automatically
  * deactivates the others.
@@ -23,12 +24,12 @@ abstract class BaseFavoriteTileService : TileService() {
     override fun onStartListening() {
         super.onStartListening()
         val tile = qsTile ?: return
-        val favorite = MockStateStore.getFavorites(this).getOrNull(slotIndex)
+        val favorite = MockStateStore.tileFavorite(this, slotIndex)
         if (favorite == null) {
             tile.state = Tile.STATE_UNAVAILABLE
             tile.label = "GPS Mock"
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                tile.subtitle = "No favorite saved"
+                tile.subtitle = "No favorite assigned"
             }
         } else {
             val activeId = MockStateStore.getActiveCommand(this)?.optString("favoriteId")
@@ -44,7 +45,7 @@ abstract class BaseFavoriteTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        val favorite = MockStateStore.getFavorites(this).getOrNull(slotIndex) ?: return
+        val favorite = MockStateStore.tileFavorite(this, slotIndex) ?: return
         if (isLocked) {
             unlockAndRun { toggle(favorite.id) }
         } else {

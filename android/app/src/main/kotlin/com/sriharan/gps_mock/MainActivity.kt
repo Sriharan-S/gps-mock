@@ -4,6 +4,7 @@ import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.os.Process
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -11,9 +12,65 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.mockgps/service"
+    private val LINKS_CHANNEL = "com.mockgps/links"
+
+    /** The newest location link or shared text not yet taken by Flutter.
+     *  Flutter pulls it (takePendingLink) once its UI is ready, and is told
+     *  when another one arrives while the app is open. */
+    private var pendingLink: String? = null
+    private var linksChannel: MethodChannel? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // A recreated activity still carries its original intent — only a
+        // fresh launch delivers a new link.
+        if (savedInstanceState == null) pendingLink = linkFrom(intent)
+        super.onCreate(savedInstanceState)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val link = linkFrom(intent) ?: return
+        pendingLink = link
+        linksChannel?.invokeMethod("linkAvailable", null)
+    }
+
+    /** The location text an intent carries: a VIEW intent's URI (geo:,
+     *  map-site links) or text shared with ACTION_SEND. */
+    private fun linkFrom(intent: Intent?): String? {
+        intent ?: return null
+        // Reopening from Recents replays the launch intent; it was handled.
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
+        return when (intent.action) {
+            Intent.ACTION_VIEW -> intent.dataString
+            Intent.ACTION_SEND -> {
+                val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+                val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                when {
+                    text.isNullOrBlank() -> subject
+                    // Some apps put the place name only in the subject.
+                    !subject.isNullOrBlank() && !text.contains(subject) ->
+                        "$subject\n$text"
+                    else -> text
+                }
+            }
+            else -> null
+        }?.takeIf { it.isNotBlank() }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        linksChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LINKS_CHANNEL).apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "takePendingLink" -> {
+                        result.success(pendingLink)
+                        pendingLink = null
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "startMocking" -> {
@@ -73,6 +130,9 @@ class MainActivity : FlutterActivity() {
                     val json = call.argument<String>("json")
                     if (json != null) {
                         MockStateStore.setFavoritesJson(this, json)
+                        call.argument<String>("tileSlots")?.let {
+                            MockStateStore.setTileSlotsJson(this, it)
+                        }
                         // Tiles and widgets mirror the favorites list.
                         com.sriharan.gps_mock.tiles.BaseFavoriteTileService.refreshAll(this)
                         com.sriharan.gps_mock.widgets.FavoriteWidgetProvider.refreshAll(this)

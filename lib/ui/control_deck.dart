@@ -13,10 +13,12 @@ import 'package:share_plus/share_plus.dart';
 
 /// The deck docked to the bottom of the map.
 ///
-/// It has two states. **Peek** is a single bar: what will be mocked, and one
-/// round button to start or stop it — the common case never needs the sheet
-/// open. **Open** adds the full controls for the active mode. The map stays
-/// the hero either way; the deck never grows past half the screen.
+/// It behaves like a bottom sheet with three stops. **Peek** is a single bar:
+/// what will be mocked, and one round button to start or stop it — the
+/// common case never needs more. **Half** adds the full controls for the
+/// active mode while keeping most of the map in view. **Full** lets a long
+/// itinerary use most of the screen. Drag anywhere on the deck to move
+/// between them; the deck follows the finger and snaps on release.
 class ControlDeck extends StatefulWidget {
   const ControlDeck({super.key, this.onHeightChanged});
 
@@ -28,25 +30,36 @@ class ControlDeck extends StatefulWidget {
   State<ControlDeck> createState() => _ControlDeckState();
 }
 
+enum _DeckStage { peek, half, full }
+
 class _ControlDeckState extends State<ControlDeck> {
   final GlobalKey _deckKey = GlobalKey();
-  bool _open = true;
+  final GlobalKey _bodyKey = GlobalKey();
+  final GlobalKey _headerKey = GlobalKey();
+  final ScrollController _contentController = ScrollController();
+  _DeckStage _stage = _DeckStage.half;
 
-  /// How far the current drag has travelled (down is positive), and whether
-  /// one is in progress. The deck follows a downward drag so collapsing it
-  /// feels like pulling a sheet, then snaps open or shut on release.
-  double _dragDy = 0;
+  /// The drag in progress: how far it has travelled (down is positive) and
+  /// how tall the deck body was when it began.
   bool _dragging = false;
+  double _dragDy = 0;
+  double _dragStartHeight = 0;
 
   /// Pull-down distance accumulated while the panel's content is already
-  /// scrolled to the top.
+  /// scrolled to the top (full stage only).
   double _overscroll = 0;
 
-  /// Travel or fling speed past which a drag counts as a deliberate toggle.
+  /// Travel or fling speed past which a drag counts as a deliberate move.
   /// Distance matters as much as speed: a slow pull that stops before the
   /// finger lifts has almost no release velocity.
-  static const _toggleDistance = 40.0;
-  static const _toggleVelocity = 300.0;
+  static const _moveDistance = 40.0;
+  static const _moveVelocity = 300.0;
+
+  @override
+  void dispose() {
+    _contentController.dispose();
+    super.dispose();
+  }
 
   void _reportHeight() {
     final box = _deckKey.currentContext?.findRenderObject() as RenderBox?;
@@ -55,16 +68,49 @@ class _ControlDeckState extends State<ControlDeck> {
     }
   }
 
-  void _setOpen(bool value) {
-    if (_open == value) return;
-    HapticFeedback.selectionClick();
-    setState(() => _open = value);
+  double _heightOf(GlobalKey key) {
+    final box = key.currentContext?.findRenderObject() as RenderBox?;
+    return box != null && box.hasSize ? box.size.height : 0;
   }
+
+  /// Body height allowed at each stage. Half keeps the map the hero — route
+  /// mode a little more so, since the itinerary only means something next to
+  /// the line it describes. Full stops short of the search bar.
+  double _halfCap(bool routeMode) =>
+      MediaQuery.of(context).size.height * (routeMode ? .46 : .52);
+
+  double _fullCap() {
+    final media = MediaQuery.of(context);
+    return math.max(
+      _halfCap(false),
+      media.size.height - media.padding.top - media.padding.bottom - 96,
+    );
+  }
+
+  void _setStage(_DeckStage stage) {
+    if (_stage == stage) return;
+    HapticFeedback.selectionClick();
+    // Below full the content is not scrollable (drags move the deck
+    // instead), so it must not be left scrolled part-way.
+    if (stage != _DeckStage.full && _contentController.hasClients) {
+      _contentController.jumpTo(0);
+    }
+    setState(() => _stage = stage);
+  }
+
+  void _stepUp() => _setStage(
+        _stage == _DeckStage.peek ? _DeckStage.half : _DeckStage.full,
+      );
+
+  void _stepDown() => _setStage(
+        _stage == _DeckStage.full ? _DeckStage.half : _DeckStage.peek,
+      );
 
   void _onDragStart(DragStartDetails details) {
     setState(() {
       _dragging = true;
       _dragDy = 0;
+      _dragStartHeight = _heightOf(_bodyKey);
     });
   }
 
@@ -72,17 +118,30 @@ class _ControlDeckState extends State<ControlDeck> {
     setState(() => _dragDy += details.primaryDelta ?? 0);
   }
 
-  void _onDragEnd(DragEndDetails details) {
+  void _onDragEnd(DragEndDetails details, bool routeMode) {
     final velocity = details.primaryVelocity ?? 0;
     final dy = _dragDy;
+    // The body height the finger asked for, which can pass a stage on the
+    // way: a long pull from full goes straight to peek, and a long push from
+    // peek straight to full.
+    final requested = _dragStartHeight - dy;
     setState(() {
       _dragging = false;
       _dragDy = 0;
     });
-    if (velocity > _toggleVelocity || dy > _toggleDistance) {
-      _setOpen(false);
-    } else if (velocity < -_toggleVelocity || dy < -_toggleDistance) {
-      _setOpen(true);
+    if (velocity > _moveVelocity || dy > _moveDistance) {
+      if (_stage == _DeckStage.full && requested > _halfCap(routeMode) * .6) {
+        _setStage(_DeckStage.half);
+      } else {
+        _setStage(_DeckStage.peek);
+      }
+    } else if (velocity < -_moveVelocity || dy < -_moveDistance) {
+      if (_stage == _DeckStage.peek &&
+          requested < (_halfCap(routeMode) + _fullCap()) / 2) {
+        _setStage(_DeckStage.half);
+      } else {
+        _setStage(_DeckStage.full);
+      }
     }
   }
 
@@ -94,17 +153,17 @@ class _ControlDeckState extends State<ControlDeck> {
     });
   }
 
-  /// Lets a pull-down on the open panel collapse the deck once its content
-  /// is scrolled to the top, the way a bottom sheet hands the gesture over.
+  /// At full, a pull-down on content that is already scrolled to the top
+  /// hands the gesture back to the deck, the way a bottom sheet does.
   bool _onContentScroll(ScrollNotification notification) {
-    if (notification.depth != 0) return false;
+    if (notification.depth != 0 || _stage != _DeckStage.full) return false;
     if (notification is OverscrollNotification &&
         notification.dragDetails != null &&
         notification.overscroll < 0) {
       _overscroll -= notification.overscroll;
-      if (_overscroll > _toggleDistance) {
+      if (_overscroll > _moveDistance) {
         _overscroll = 0;
-        _setOpen(false);
+        _setStage(_DeckStage.half);
       }
     } else if (notification is ScrollStartNotification ||
         notification is ScrollEndNotification) {
@@ -121,29 +180,46 @@ class _ControlDeckState extends State<ControlDeck> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _reportHeight());
 
-    // Only a downward pull on the open deck moves it; the rest snaps on
-    // release.
-    final followDy = _open ? math.max(0.0, _dragDy) : 0.0;
+    // While dragging the body tracks the finger, bounded by the header below
+    // (anything further down slides the whole deck off the bottom edge) and
+    // by the full stage above.
+    final header = _heightOf(_headerKey);
+    final double maxHeight;
+    var slide = 0.0;
+    if (_dragging) {
+      final requested = _dragStartHeight - _dragDy;
+      maxHeight = requested.clamp(header, _fullCap()).toDouble();
+      if (requested < header) slide = header - requested;
+    } else {
+      maxHeight = switch (_stage) {
+        _DeckStage.peek => header == 0 ? double.infinity : header,
+        _DeckStage.half => _halfCap(routeMode),
+        _DeckStage.full => _fullCap(),
+      };
+    }
+    final showContent =
+        _stage != _DeckStage.peek || (_dragging && _dragDy < 0);
 
-    // The whole deck is the drag handle, not just the thin grabber: the peek
-    // bar and any panel content that doesn't scroll pass vertical drags up to
-    // here, while content that does scroll keeps them and hands over through
-    // [_onContentScroll] once it reaches the top.
+    // The whole deck is the drag handle, not just the thin grabber. Content
+    // only scrolls at full; below that its drags move the deck, so a panel
+    // that doesn't fit at half is revealed by pulling the deck up.
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onVerticalDragStart: _onDragStart,
       onVerticalDragUpdate: _onDragUpdate,
-      onVerticalDragEnd: _onDragEnd,
+      onVerticalDragEnd: (details) => _onDragEnd(details, routeMode),
       onVerticalDragCancel: _onDragCancel,
       child: AnimatedContainer(
         duration:
             _dragging ? Duration.zero : const Duration(milliseconds: 200),
         curve: Curves.easeOutCubic,
-        transform: Matrix4.translationValues(0, followDy, 0),
+        transform: Matrix4.translationValues(0, slide, 0),
         child: _buildDeck(
           context,
           navigating: navigating,
           routeMode: routeMode,
+          maxHeight: maxHeight,
+          showContent: showContent,
         ),
       ),
     );
@@ -153,8 +229,11 @@ class _ControlDeckState extends State<ControlDeck> {
     BuildContext context, {
     required bool navigating,
     required bool routeMode,
+    required double maxHeight,
+    required bool showContent,
   }) {
     final scheme = Theme.of(context).colorScheme;
+    final scrollable = _stage == _DeckStage.full && !_dragging;
     return Material(
       key: _deckKey,
       color: scheme.surface,
@@ -165,32 +244,47 @@ class _ControlDeckState extends State<ControlDeck> {
       child: SafeArea(
         top: false,
         child: AnimatedSize(
-          duration: const Duration(milliseconds: 240),
+          // Effectively instant while dragging, so the deck tracks the
+          // finger. Not zero: a zero-length size animation completes inside
+          // layout, which the framework rejects.
+          duration: _dragging
+              ? const Duration(milliseconds: 1)
+              : const Duration(milliseconds: 240),
           curve: Curves.easeOutCubic,
           alignment: Alignment.bottomCenter,
           child: ConstrainedBox(
-            constraints: BoxConstraints(
-              // Route mode keeps a bigger window on the map: the itinerary is
-              // only meaningful next to the line it describes.
-              maxHeight:
-                  MediaQuery.of(context).size.height * (routeMode ? .46 : .52),
-            ),
+            constraints: BoxConstraints(maxHeight: maxHeight),
             child: Column(
+              key: _bodyKey,
               mainAxisSize: MainAxisSize.min,
               children: [
-                _Grabber(
-                  open: _open,
-                  onToggle: () => _setOpen(!_open),
+                Column(
+                  key: _headerKey,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _Grabber(
+                      stage: _stage,
+                      onTap: _stage == _DeckStage.peek
+                          ? _stepUp
+                          : () => _setStage(_DeckStage.peek),
+                      onIncrease: _stage == _DeckStage.full ? null : _stepUp,
+                      onDecrease: _stage == _DeckStage.peek ? null : _stepDown,
+                    ),
+                    _PeekBar(
+                      open: _stage != _DeckStage.peek,
+                      onExpand: _stepUp,
+                    ),
+                  ],
                 ),
-                _PeekBar(
-                  open: _open,
-                  onExpand: () => _setOpen(true),
-                ),
-                if (_open)
+                if (showContent)
                   Flexible(
                     child: NotificationListener<ScrollNotification>(
                       onNotification: _onContentScroll,
                       child: SingleChildScrollView(
+                        controller: _contentController,
+                        physics: scrollable
+                            ? null
+                            : const NeverScrollableScrollPhysics(),
                         padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -220,23 +314,53 @@ class _ControlDeckState extends State<ControlDeck> {
   }
 }
 
-/// The handle. Tapping toggles the deck; dragging is handled by the deck
-/// itself so the whole surface responds, not just this strip.
+/// The handle. Tapping opens a collapsed deck or collapses an open one;
+/// screen readers can also step it up and down. Dragging is handled by the
+/// deck itself so the whole surface responds, not just this strip.
 class _Grabber extends StatelessWidget {
-  const _Grabber({required this.open, required this.onToggle});
+  const _Grabber({
+    required this.stage,
+    required this.onTap,
+    required this.onIncrease,
+    required this.onDecrease,
+  });
 
-  final bool open;
-  final VoidCallback onToggle;
+  final _DeckStage stage;
+  final VoidCallback onTap;
+  final VoidCallback? onIncrease;
+  final VoidCallback? onDecrease;
+
+  static String _describe(_DeckStage stage) => switch (stage) {
+        _DeckStage.peek => 'Collapsed',
+        _DeckStage.half => 'Half open',
+        _DeckStage.full => 'Fully open',
+      };
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Semantics(
       button: true,
-      label: open ? 'Collapse the controls' : 'Expand the controls',
+      label: stage == _DeckStage.peek
+          ? 'Expand the controls'
+          : 'Collapse the controls',
+      value: _describe(stage),
+      // Adjustable nodes must say what increasing/decreasing leads to.
+      increasedValue: onIncrease == null
+          ? null
+          : _describe(
+              stage == _DeckStage.peek ? _DeckStage.half : _DeckStage.full,
+            ),
+      decreasedValue: onDecrease == null
+          ? null
+          : _describe(
+              stage == _DeckStage.full ? _DeckStage.half : _DeckStage.peek,
+            ),
+      onIncrease: onIncrease,
+      onDecrease: onDecrease,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: onToggle,
+        onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 11),
           child: Center(
@@ -1144,10 +1268,32 @@ class _PaceControl extends StatelessWidget {
               ),
               const Spacer(),
               if (kmh != null)
-                Text(
-                  kmh > 300 ? '$kmh km/h — unrealistic' : '≈ $kmh km/h',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: kmh > 300 ? scheme.error : scheme.onSurfaceVariant,
+                // Tapping the speed sets the pace by speed instead.
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _pickSpeed(context, kmh),
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          kmh > 300
+                              ? '$kmh km/h — unrealistic'
+                              : '≈ $kmh km/h',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: kmh > 300 ? scheme.error : scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.edit_outlined,
+                          size: 14,
+                          color: kmh > 300 ? scheme.error : scheme.primary,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
             ],
@@ -1242,6 +1388,55 @@ class _PaceControl extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Asks for an average speed and turns it into a trip length.
+  Future<void> _pickSpeed(BuildContext context, int currentKmh) async {
+    final controller = TextEditingController(text: '$currentKmh');
+    String? error;
+    final kmh = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          void submit() {
+            final value = double.tryParse(controller.text.trim());
+            if (value == null || value <= 0) {
+              setDialogState(() => error = 'Enter a speed above 0');
+              return;
+            }
+            Navigator.pop(dialogContext, value);
+          }
+
+          return AlertDialog(
+            title: const Text('Average speed'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                suffixText: 'km/h',
+                errorText: error,
+                helperText:
+                    'The trip length is worked out from the route distance.',
+              ),
+              onSubmitted: (_) => submit(),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(onPressed: submit, child: const Text('Set')),
+            ],
+          );
+        },
+      ),
+    );
+    // Not disposed here: the dialog's field may still be animating out.
+    if (kmh == null) return;
+    final hours = (route.distanceMeters / 1000) / kmh;
+    onMinutes(math.max(1, (hours * 60).round()));
   }
 
   /// Coarser steps on long trips so the stepper stays usable.
